@@ -3,25 +3,46 @@
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
-from asgard.core.config import ConfigError, prepare_run
+from asgard.core.config import ConfigError, RunConfig, prepare_run
+from asgard.core.orchestrator import Orchestrator
+from asgard.core.sinks import CLIProgressSink, JSONLSink, LoggingSink
+from asgard.core.stages.mine import MineStage
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, *, opener: Any = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command != "run":
         parser.print_help()
         return
     try:
-        prepare_run(_overrides(args), args.config)
+        config = prepare_run(_overrides(args), args.config, opener=opener)
     except (ConfigError, ValidationError, ValueError) as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
+    try:
+        _run_mine(config, opener)
+    except ConfigError:
+        raise SystemExit(2) from None
+
+
+def _run_mine(config: RunConfig, opener: Any) -> None:
+    sinks = [
+        CLIProgressSink(),
+        JSONLSink(config.output_dir / "events.jsonl"),
+        LoggingSink(),
+    ]
+    Orchestrator([MineStage(opener=opener)], sinks).run(
+        config.output_dir,
+        only="mine",
+        data=config,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -32,7 +53,7 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     sub = parser.add_subparsers(dest="command")
-    run = sub.add_parser("run", help="resolve, validate, and save a run configuration")
+    run = sub.add_parser("run", help="validate settings, save them, and mine pull requests")
     run.add_argument("repo", nargs="?")
     run.add_argument("--config", type=Path)
     run.add_argument("--output-dir")
