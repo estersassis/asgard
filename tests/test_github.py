@@ -9,7 +9,7 @@ from datetime import date
 import pytest
 
 from asgard.core.config import ConfigError
-from asgard.core.github import list_pulls
+from asgard.core.github import fetch_pull, list_pulls
 
 TOKEN = "ghp_secret"
 
@@ -95,3 +95,66 @@ def test_stops_at_max_prs_and_date_range() -> None:
     )
     assert [item["number"] for item in dated] == [50]
     assert seen == [1, 2]
+
+
+def test_fetch_pull_joins_discussion_and_keeps_deleted_users() -> None:
+    page = [
+        {"id": 1, "body": "elsewhere", "user": {"login": "ada"}, "in_reply_to_id": None},
+        {"id": 2, "body": "root", "user": None, "in_reply_to_id": None},
+        *[
+            {"id": number, "body": f"reply {number}", "user": {"login": "ada"}, "in_reply_to_id": 2}
+            for number in range(3, 101)
+        ],
+    ]
+    seen: list[str] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        url = request.full_url
+        seen.append(url)
+        assert request.get_header("Authorization") == f"Bearer {TOKEN}"
+        assert request.get_header("Accept") == "application/vnd.github+json"
+        if url.endswith("/pulls/7"):
+            body = {"number": 7, "title": "fix", "body": "the change", "user": None}
+            return _Response(json.dumps(body).encode())
+        if "/issues/7/comments" in url:
+            return _Response(json.dumps([{"id": 9, "body": "lgtm", "user": None}]).encode())
+        if "/pulls/7/reviews" in url:
+            review = {"id": 8, "body": "ship it", "user": {"login": "bea"}}
+            return _Response(json.dumps([review]).encode())
+        page_number = int(url.rsplit("page=", 1)[1])
+        if page_number == 1:
+            return _Response(json.dumps(page).encode())
+        reply = {"id": 101, "body": "still going", "user": None, "in_reply_to_id": 2}
+        return _Response(json.dumps([reply]).encode())
+
+    pull = fetch_pull("jpadilla/pyjwt", 7, TOKEN, opener=opener)
+    assert pull["body"] == "the change"
+    assert pull["user"] is None
+    assert pull["issue_comments"] == [{"id": 9, "body": "lgtm", "user": None}]
+    assert pull["reviews"] == [{"id": 8, "body": "ship it", "user": {"login": "bea"}}]
+    assert [thread["id"] for thread in pull["threads"]] == [1, 2]
+    long_thread = pull["threads"][1]["comments"]
+    assert [item["id"] for item in long_thread] == list(range(2, 102))
+    assert long_thread[0]["user"] is None
+    assert long_thread[-1]["user"] is None
+    assert seen[0].endswith("/pulls/7")
+    assert "/issues/7/comments?per_page=100&page=1" in seen[1]
+    assert "/pulls/7/reviews?per_page=100&page=1" in seen[2]
+    assert "/pulls/7/comments?per_page=100&page=1" in seen[3]
+    assert "/pulls/7/comments?per_page=100&page=2" in seen[4]
+    assert len(seen) == 5
+
+
+def test_fetch_pull_does_not_echo_the_token() -> None:
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        raise urllib.error.HTTPError(
+            request.full_url,
+            404,
+            "missing",
+            hdrs=None,
+            fp=io.BytesIO(TOKEN.encode()),
+        )
+
+    with pytest.raises(ConfigError, match="repository not found") as caught:
+        fetch_pull("jpadilla/pyjwt", 7, TOKEN, opener=opener)
+    assert TOKEN not in str(caught.value)

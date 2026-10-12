@@ -45,6 +45,29 @@ def list_pulls(
         page += 1
 
 
+def fetch_pull(
+    repo: str,
+    number: int,
+    token: str,
+    *,
+    opener: Any = None,
+) -> dict[str, Any]:
+    """Fetch one pull request with its comments, reviews, and review threads."""
+    open_url = opener or urllib.request.urlopen
+    pull = _get_json(repo, token, f"pulls/{number}", open_url)
+    if not isinstance(pull, dict):
+        raise ConfigError("github pull was not an object")
+    issue_comments = _fetch_list(repo, token, f"issues/{number}/comments", open_url)
+    reviews = _fetch_list(repo, token, f"pulls/{number}/reviews", open_url)
+    review_comments = _fetch_list(repo, token, f"pulls/{number}/comments", open_url)
+    return {
+        **pull,
+        "issue_comments": issue_comments,
+        "reviews": reviews,
+        "threads": _threads(review_comments),
+    }
+
+
 def _fetch_page(repo: str, token: str, state: str, page: int, opener: Any) -> list[dict[str, Any]]:
     owner, name = repo.split("/", 1)
     url = (
@@ -52,6 +75,34 @@ def _fetch_page(repo: str, token: str, state: str, page: int, opener: Any) -> li
         f"?state={quote(state, safe='')}&per_page={_PAGE_SIZE}"
         f"&sort=created&direction=desc&page={page}"
     )
+    payload = _read_json(url, token, opener)
+    if not isinstance(payload, list):
+        raise ConfigError("github pull list was not a list")
+    return payload
+
+
+def _fetch_list(repo: str, token: str, path: str, opener: Any) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        payload = _get_json(repo, token, f"{path}?per_page={_PAGE_SIZE}&page={page}", opener)
+        if not isinstance(payload, list):
+            raise ConfigError("github response was not a list")
+        found.extend(payload)
+        if len(payload) < _PAGE_SIZE:
+            return found
+        page += 1
+
+
+def _get_json(repo: str, token: str, path: str, opener: Any) -> Any:
+    owner, name = repo.split("/", 1)
+    url = (
+        f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(name, safe='')}/{path}"
+    )
+    return _read_json(url, token, opener)
+
+
+def _read_json(url: str, token: str, opener: Any) -> Any:
     request = urllib.request.Request(
         url,
         headers={
@@ -62,12 +113,48 @@ def _fetch_page(repo: str, token: str, state: str, page: int, opener: Any) -> li
     )
     try:
         with opener(request, timeout=10) as response:
-            payload = json.loads(response.read().decode())
+            return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         raise ConfigError(_github_error(exc, token)) from None
-    if not isinstance(payload, list):
-        raise ConfigError("github pull list was not a list")
-    return payload
+
+
+def _threads(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group review comments by the thread root. Replies may arrive on a later page."""
+    by_id = {
+        comment["id"]: comment
+        for comment in comments
+        if isinstance(comment.get("id"), int)
+    }
+    groups: dict[int, list[dict[str, Any]]] = {}
+    order: list[int] = []
+    for comment in comments:
+        root = _thread_root(comment, by_id)
+        if root not in groups:
+            groups[root] = []
+            order.append(root)
+        if comment.get("id") == root:
+            groups[root].insert(0, comment)
+        else:
+            groups[root].append(comment)
+    return [{"id": root, "comments": groups[root]} for root in order]
+
+
+def _thread_root(comment: dict[str, Any], by_id: dict[int, dict[str, Any]]) -> int:
+    seen: set[int] = set()
+    current = comment
+    while isinstance(current.get("in_reply_to_id"), int):
+        parent_id = current["in_reply_to_id"]
+        if parent_id in seen:
+            break
+        seen.add(parent_id)
+        parent = by_id.get(parent_id)
+        if parent is None:
+            return parent_id
+        current = parent
+    comment_id = current.get("id")
+    if isinstance(comment_id, int):
+        return comment_id
+    return 0
 
 
 def _created_on(pr: dict[str, Any]) -> date | None:
