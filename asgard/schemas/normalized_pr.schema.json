@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "CodeReviewThread": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "title": "Scope",
+          "type": "string"
+        },
+        "comments": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Comments",
+          "type": "array"
+        }
+      },
+      "required": [
+        "scope",
+        "comments"
+      ],
+      "title": "CodeReviewThread",
+      "type": "object"
+    },
+    "PullRequestContext": {
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "title": "Repository",
+          "type": "string"
+        },
+        "pr_id": {
+          "title": "Pr Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "is_merged": {
+          "title": "Is Merged",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repository",
+        "pr_id",
+        "title",
+        "state",
+        "is_merged"
+      ],
+      "title": "PullRequestContext",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "context": {
+      "$ref": "#/$defs/PullRequestContext"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "general_discussion": {
+      "items": {
+        "type": "string"
+      },
+      "title": "General Discussion",
+      "type": "array"
+    },
+    "code_review_threads": {
+      "items": {
+        "$ref": "#/$defs/CodeReviewThread"
+      },
+      "title": "Code Review Threads",
+      "type": "array"
+    }
+  },
+  "required": [
+    "context",
+    "description",
+    "general_discussion",
+    "code_review_threads"
+  ],
+  "title": "NormalizedPullRequest",
+  "type": "object"
+}

@@ -11,8 +11,10 @@ from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.sinks import CLIProgressSink, JSONLSink, LoggingSink
 from asgard.core.stages.mine import MineStage
+from asgard.core.stages.normalize import NormalizeStage
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
+_PIPELINE = ("mine", "normalize")
 
 
 def main(argv: list[str] | None = None, *, opener: Any = None) -> None:
@@ -27,21 +29,23 @@ def main(argv: list[str] | None = None, *, opener: Any = None) -> None:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
     try:
-        _run_mine(config, opener)
-    except ConfigError:
+        _run_pipeline(config, opener, start=args.start)
+    except (ConfigError, ValueError) as exc:
+        print(exc, file=sys.stderr)
         raise SystemExit(2) from None
 
 
-def _run_mine(config: RunConfig, opener: Any) -> None:
+def _run_pipeline(config: RunConfig, opener: Any, *, start: str | None = None) -> None:
     sinks = [
         CLIProgressSink(),
         JSONLSink(config.output_dir / "events.jsonl"),
         LoggingSink(),
     ]
-    Orchestrator([MineStage(opener=opener)], sinks).run(
+    stages = [MineStage(opener=opener), NormalizeStage(repo=config.repo)]
+    Orchestrator(stages, sinks).run(
         config.output_dir,
-        only="mine",
-        data=config,
+        start=start,
+        data=config if start in (None, stages[0].name) else None,
     )
 
 
@@ -53,8 +57,17 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     sub = parser.add_subparsers(dest="command")
-    run = sub.add_parser("run", help="validate settings, save them, and mine pull requests")
+    run = sub.add_parser(
+        "run",
+        help="validate settings, save them, mine pull requests, and normalize them",
+    )
     run.add_argument("repo", nargs="?")
+    run.add_argument(
+        "--from",
+        dest="start",
+        choices=_PIPELINE,
+        help="start at this stage and continue; earlier stages must already be done",
+    )
     run.add_argument("--config", type=Path)
     run.add_argument("--output-dir")
     run.add_argument("--max-iterations", type=int)

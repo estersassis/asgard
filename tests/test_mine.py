@@ -228,8 +228,20 @@ def test_run_mines_after_saving_config(
         json.loads(line)
         for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert [event["type"] for event in events] == ["StageStarted", "PRMined", "StageFinished"]
+    assert [event["type"] for event in events] == [
+        "StageStarted",
+        "PRMined",
+        "StageFinished",
+        "StageStarted",
+        "StageFinished",
+    ]
+    assert events[0]["stage"] == "mine"
     assert events[1]["pr_id"] == "4"
+    assert events[3]["stage"] == "normalize"
+    assert events[4] == {"type": "StageFinished", "stage": "normalize", "skipped": False}
+    normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
+    assert normalized[0]["description"] == "change"
+    assert normalized[0]["context"]["repository"] == "jpadilla/pyjwt"
     captured = capsys.readouterr()
     assert captured.out == ""
     assert TOKEN not in captured.err
@@ -242,8 +254,61 @@ def test_run_mines_after_saving_config(
     finished = [
         json.loads(line)
         for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    ][-1]
-    assert finished == {"type": "StageFinished", "stage": "mine", "skipped": True}
+    ][-2:]
+    assert finished == [
+        {"type": "StageFinished", "stage": "mine", "skipped": True},
+        {"type": "StageFinished", "stage": "normalize", "skipped": True},
+    ]
+
+
+def test_run_from_normalize_uses_the_saved_mine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    monkeypatch.setattr("asgard.core.config.load_dotenv", lambda path=Path(".env"): None)
+    out = tmp_path / "out"
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "jpadilla/pyjwt"',
+                f'output_dir = "{out}"',
+                "",
+                "[llm.default]",
+                'provider = "fake"',
+                'model = "fake"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    seen: list[str] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        seen.append(request.full_url)
+        if "/pulls?" in request.full_url:
+            return _Response(json.dumps([_pull(4, "2024-01-01")]).encode())
+        if request.full_url.endswith("/pulls/4"):
+            return _Response(json.dumps({"number": 4, "body": "change"}).encode())
+        return _Response(b"[]")
+
+    with pytest.raises(SystemExit) as caught:
+        main(["run", "--config", str(source), "--from", "normalize"], opener=opener)
+    assert caught.value.code == 2
+    assert "previous stage is not done: mine" in capsys.readouterr().err
+    assert not any("/pulls" in url for url in seen)
+
+    main(["run", "--config", str(source), "--max-prs", "1"], opener=opener)
+    normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
+    (out / "normalize" / "output.json").unlink()
+    (out / "normalize" / "items.jsonl").unlink()
+    calls = len(seen)
+    main(["run", "--config", str(out / "config.json"), "--from", "normalize"], opener=opener)
+    assert len(seen) == calls + 1
+    assert "/pulls" not in seen[-1]
+    assert json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8")) == normalized
 
 
 @pytest.mark.smoke

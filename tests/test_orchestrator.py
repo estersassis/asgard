@@ -96,6 +96,29 @@ def test_full_pipeline_single_stage_and_resume(tmp_path: Path) -> None:
         only.run(only_dir, only="missing")
 
 
+def test_start_continues_when_earlier_stages_are_done(tmp_path: Path) -> None:
+    log: list[str] = []
+    stages = [Record(name, log) for name in ("mine", "normalize", "prefilter")]
+    orchestrator = Orchestrator(stages)
+
+    with pytest.raises(ValueError, match="previous stage is not done: mine"):
+        orchestrator.run(tmp_path, start="prefilter")
+
+    orchestrator.run(tmp_path, data={"seed": True})
+    assert log == ["mine", "normalize", "prefilter"]
+    log.clear()
+    (tmp_path / "normalize" / "output.json").unlink()
+    (tmp_path / "prefilter" / "output.json").unlink()
+
+    result = orchestrator.run(tmp_path, start="normalize")
+    assert log == ["normalize", "prefilter"]
+    assert result["stage"] == "prefilter"
+    assert result["prev"]["prev"]["stage"] == "mine"
+
+    with pytest.raises(ValueError, match="pass only one of only and start"):
+        orchestrator.run(tmp_path, only="normalize", start="normalize")
+
+
 def test_resume_skips_finished_prs(tmp_path: Path) -> None:
     prs = ["1", "2", "3"]
     sink = ListSink()
