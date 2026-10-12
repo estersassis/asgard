@@ -1,9 +1,10 @@
-"""One page of pull request metadata, without the network."""
+"""Pull request listing, without the network."""
 
 import io
 import json
 import urllib.error
 import urllib.request
+from datetime import date
 
 import pytest
 
@@ -44,9 +45,10 @@ def test_list_pulls_keeps_api_order() -> None:
 
     pulls = list_pulls("jpadilla/pyjwt", TOKEN, state="closed", opener=opener)
     assert [item["number"] for item in pulls] == [2, 1]
-    assert seen == [
-        "https://api.github.com/repos/jpadilla/pyjwt/pulls?state=closed&per_page=100"
-    ]
+    assert "state=closed" in seen[0]
+    assert "per_page=100" in seen[0]
+    assert seen[0].endswith("&page=1")
+    assert len(seen) == 1
 
 
 def test_unauthorized_does_not_echo_the_token() -> None:
@@ -62,3 +64,34 @@ def test_unauthorized_does_not_echo_the_token() -> None:
     with pytest.raises(ConfigError, match="invalid GitHub token") as caught:
         list_pulls("jpadilla/pyjwt", TOKEN, opener=opener)
     assert TOKEN not in str(caught.value)
+
+
+def test_stops_at_max_prs_and_date_range() -> None:
+    def pr(number: int, day: str) -> dict[str, str | int]:
+        return {"number": number, "created_at": f"{day}T00:00:00Z"}
+
+    pages = {
+        1: [pr(number, "2024-03-01") for number in range(100)],
+        2: [pr(50, "2024-02-01"), pr(40, "2024-01-01")],
+    }
+    seen: list[int] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        page = int(request.full_url.rsplit("page=", 1)[1])
+        seen.append(page)
+        return _Response(json.dumps(pages.get(page, [])).encode())
+
+    limited = list_pulls("jpadilla/pyjwt", TOKEN, max_prs=2, opener=opener)
+    assert [item["number"] for item in limited] == [0, 1]
+    assert seen == [1]
+
+    seen.clear()
+    dated = list_pulls(
+        "jpadilla/pyjwt",
+        TOKEN,
+        since=date(2024, 1, 15),
+        until=date(2024, 2, 15),
+        opener=opener,
+    )
+    assert [item["number"] for item in dated] == [50]
+    assert seen == [1, 2]
