@@ -10,14 +10,16 @@ from pathlib import Path
 import pytest
 
 from asgard.core.config import ConfigError
+from asgard.core.events import Error, Event, RateLimited
 from asgard.core.github import cache_pulls, fetch_pull, list_pulls
 
 TOKEN = "ghp_secret"
 
 
 class _Response:
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
         self._body = body
+        self.headers = headers or {}
 
     def __enter__(self) -> "_Response":
         return self
@@ -196,3 +198,188 @@ def test_fetch_pull_does_not_echo_the_token() -> None:
     with pytest.raises(ConfigError, match="repository not found") as caught:
         fetch_pull("jpadilla/pyjwt", 7, TOKEN, opener=opener)
     assert TOKEN not in str(caught.value)
+
+
+def test_waits_until_reset_when_remaining_is_zero() -> None:
+    now = 1_700_000_000.0
+    slept: list[float] = []
+    events: list[Event] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        page = int(request.full_url.rsplit("page=", 1)[1])
+        headers = {
+            "X-RateLimit-Limit": "60",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": str(now + 30),
+            "Retry-After": "999",
+        }
+        if page == 1:
+            body = [{"number": number} for number in range(100)]
+            return _Response(json.dumps(body).encode(), headers)
+        assert slept == [30.0]
+        headers["X-RateLimit-Remaining"] = "4999"
+        return _Response(b"[]", headers)
+
+    pulls = list_pulls(
+        "jpadilla/pyjwt",
+        TOKEN,
+        opener=opener,
+        sleep=slept.append,
+        emit=events.append,
+        now=lambda: now,
+    )
+    assert len(pulls) == 100
+    assert slept == [30.0]
+    assert events == [RateLimited(wait_seconds=30.0)]
+    assert TOKEN not in events[0].model_dump_json()
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_retries_after_retry_after(status: int) -> None:
+    now = 1_700_000_000.0
+    slept: list[float] = []
+    events: list[Event] = []
+    calls = 0
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                status,
+                "slow",
+                {
+                    "Retry-After": "8",
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(now + 100),
+                },
+                io.BytesIO(TOKEN.encode()),
+            )
+        return _Response(json.dumps([{"number": 1}]).encode())
+
+    pulls = list_pulls(
+        "jpadilla/pyjwt",
+        TOKEN,
+        opener=opener,
+        sleep=slept.append,
+        emit=events.append,
+        now=lambda: now,
+    )
+    assert [item["number"] for item in pulls] == [1]
+    assert slept == [8.0]
+    assert events == [RateLimited(wait_seconds=8.0)]
+    assert TOKEN not in events[0].model_dump_json()
+    assert calls == 2
+
+
+def test_forbidden_waits_until_reset_without_retry_after() -> None:
+    now = 1_700_000_000.0
+    slept: list[float] = []
+    events: list[Event] = []
+    calls = 0
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                403,
+                "limit",
+                {
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(now + 15),
+                },
+                io.BytesIO(TOKEN.encode()),
+            )
+        return _Response(b"[]")
+
+    assert list_pulls(
+        "jpadilla/pyjwt",
+        TOKEN,
+        opener=opener,
+        sleep=slept.append,
+        emit=events.append,
+        now=lambda: now,
+    ) == []
+    assert slept == [15.0]
+    assert events == [RateLimited(wait_seconds=15.0)]
+    assert TOKEN not in events[0].model_dump_json()
+
+
+def test_rate_limit_error_does_not_echo_the_token() -> None:
+    slept: list[float] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        raise urllib.error.HTTPError(
+            request.full_url,
+            429,
+            "slow",
+            {"X-RateLimit-Remaining": "5"},
+            io.BytesIO(f"see {TOKEN}".encode()),
+        )
+
+    with pytest.raises(ConfigError, match="HTTP 429") as caught:
+        list_pulls("jpadilla/pyjwt", TOKEN, opener=opener, sleep=slept.append)
+    assert TOKEN not in str(caught.value)
+    assert slept == []
+
+
+def test_anonymous_limit_warns_once_and_omits_authorization() -> None:
+    events: list[Event] = []
+    calls = 0
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        nonlocal calls
+        calls += 1
+        assert request.get_header("Authorization") is None
+        headers = {"X-RateLimit-Limit": "60", "X-RateLimit-Remaining": "59"}
+        if calls == 1:
+            body = [{"number": number} for number in range(100)]
+            return _Response(json.dumps(body).encode(), headers)
+        return _Response(b"[]", headers)
+
+    pulls = list_pulls("jpadilla/pyjwt", None, opener=opener, emit=events.append)
+    assert len(pulls) == 100
+    warnings = [event for event in events if isinstance(event, Error)]
+    assert [event.message for event in warnings] == [
+        "warning: anonymous GitHub rate limit is 60 requests per hour"
+    ]
+    assert TOKEN not in warnings[0].message
+    assert calls == 2
+
+
+def test_cache_pulls_retries_with_injected_sleep(tmp_path: Path) -> None:
+    slept: list[float] = []
+    events: list[Event] = []
+    calls = 0
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        nonlocal calls
+        calls += 1
+        if request.full_url.endswith("/pulls/7") and calls == 1:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                429,
+                "slow",
+                {"Retry-After": "4"},
+                io.BytesIO(TOKEN.encode()),
+            )
+        if request.full_url.endswith("/pulls/7"):
+            return _Response(json.dumps({"number": 7, "body": "the change"}).encode())
+        return _Response(b"[]")
+
+    listing = [{"number": 7, "updated_at": "2024-01-01T00:00:00Z"}]
+    assert cache_pulls(
+        tmp_path,
+        "jpadilla/pyjwt",
+        TOKEN,
+        listing,
+        opener=opener,
+        sleep=slept.append,
+        emit=events.append,
+    ) == [7]
+    assert slept == [4.0]
+    assert events == [RateLimited(wait_seconds=4.0)]
+    assert TOKEN not in events[0].model_dump_json()

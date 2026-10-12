@@ -1,34 +1,43 @@
 """GitHub REST calls used by the pipeline."""
 
 import json
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from asgard.core.config import ConfigError
+from asgard.core.events import Error, Event, RateLimited
+
+_ANONYMOUS_LIMIT = "warning: anonymous GitHub rate limit is 60 requests per hour"
 
 _PAGE_SIZE = 100
 
 
 def list_pulls(
     repo: str,
-    token: str,
+    token: str | None,
     *,
     state: str = "all",
     since: date | None = None,
     until: date | None = None,
     max_prs: int | None = None,
     opener: Any = None,
+    sleep: Callable[[float], None] = time.sleep,
+    emit: Callable[[Event], None] | None = None,
+    now: Callable[[], float] = time.time,
 ) -> list[dict[str, Any]]:
     """List pull requests, newest first, until the filters are satisfied."""
     open_url = opener or urllib.request.urlopen
+    transport = _Transport(sleep, emit, now)
     found: list[dict[str, Any]] = []
     page = 1
     while True:
-        batch = _fetch_page(repo, token, state, page, open_url)
+        batch = _fetch_page(repo, token, state, page, open_url, transport)
         if not batch:
             return found
         for pr in batch:
@@ -49,10 +58,13 @@ def list_pulls(
 def cache_pulls(
     run_dir: Path,
     repo: str,
-    token: str,
+    token: str | None,
     pulls: list[dict[str, Any]],
     *,
     opener: Any = None,
+    sleep: Callable[[float], None] = time.sleep,
+    emit: Callable[[Event], None] | None = None,
+    now: Callable[[], float] = time.time,
 ) -> list[int]:
     """Store each pull under ``run_dir/mine/prs`` and return their numbers.
 
@@ -71,7 +83,15 @@ def cache_pulls(
         listed_at = pr.get("updated_at")
         if _cache_hit(path, listed_at):
             continue
-        fetched = fetch_pull(repo, number, token, opener=opener)
+        fetched = fetch_pull(
+            repo,
+            number,
+            token,
+            opener=opener,
+            sleep=sleep,
+            emit=emit,
+            now=now,
+        )
         fetched["updated_at"] = listed_at
         _write_json(path, fetched)
     _write_json(Path(run_dir) / "mine" / "output.json", numbers)
@@ -81,18 +101,22 @@ def cache_pulls(
 def fetch_pull(
     repo: str,
     number: int,
-    token: str,
+    token: str | None,
     *,
     opener: Any = None,
+    sleep: Callable[[float], None] = time.sleep,
+    emit: Callable[[Event], None] | None = None,
+    now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     """Fetch one pull request with its comments, reviews, and review threads."""
     open_url = opener or urllib.request.urlopen
-    pull = _get_json(repo, token, f"pulls/{number}", open_url)
+    transport = _Transport(sleep, emit, now)
+    pull = _get_json(repo, token, f"pulls/{number}", open_url, transport)
     if not isinstance(pull, dict):
         raise ConfigError("github pull was not an object")
-    issue_comments = _fetch_list(repo, token, f"issues/{number}/comments", open_url)
-    reviews = _fetch_list(repo, token, f"pulls/{number}/reviews", open_url)
-    review_comments = _fetch_list(repo, token, f"pulls/{number}/comments", open_url)
+    issue_comments = _fetch_list(repo, token, f"issues/{number}/comments", open_url, transport)
+    reviews = _fetch_list(repo, token, f"pulls/{number}/reviews", open_url, transport)
+    review_comments = _fetch_list(repo, token, f"pulls/{number}/comments", open_url, transport)
     return {
         **pull,
         "issue_comments": issue_comments,
@@ -101,24 +125,43 @@ def fetch_pull(
     }
 
 
-def _fetch_page(repo: str, token: str, state: str, page: int, opener: Any) -> list[dict[str, Any]]:
+def _fetch_page(
+    repo: str,
+    token: str | None,
+    state: str,
+    page: int,
+    opener: Any,
+    transport: "_Transport",
+) -> list[dict[str, Any]]:
     owner, name = repo.split("/", 1)
     url = (
         f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(name, safe='')}/pulls"
         f"?state={quote(state, safe='')}&per_page={_PAGE_SIZE}"
         f"&sort=created&direction=desc&page={page}"
     )
-    payload = _read_json(url, token, opener)
+    payload = _read_json(url, token, opener, transport)
     if not isinstance(payload, list):
         raise ConfigError("github pull list was not a list")
     return payload
 
 
-def _fetch_list(repo: str, token: str, path: str, opener: Any) -> list[dict[str, Any]]:
+def _fetch_list(
+    repo: str,
+    token: str | None,
+    path: str,
+    opener: Any,
+    transport: "_Transport",
+) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     page = 1
     while True:
-        payload = _get_json(repo, token, f"{path}?per_page={_PAGE_SIZE}&page={page}", opener)
+        payload = _get_json(
+            repo,
+            token,
+            f"{path}?per_page={_PAGE_SIZE}&page={page}",
+            opener,
+            transport,
+        )
         if not isinstance(payload, list):
             raise ConfigError("github response was not a list")
         found.extend(payload)
@@ -127,28 +170,116 @@ def _fetch_list(repo: str, token: str, path: str, opener: Any) -> list[dict[str,
         page += 1
 
 
-def _get_json(repo: str, token: str, path: str, opener: Any) -> Any:
+def _get_json(
+    repo: str,
+    token: str | None,
+    path: str,
+    opener: Any,
+    transport: "_Transport",
+) -> Any:
     owner, name = repo.split("/", 1)
     url = (
         f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(name, safe='')}/{path}"
     )
-    return _read_json(url, token, opener)
+    return _read_json(url, token, opener, transport)
 
 
-def _read_json(url: str, token: str, opener: Any) -> Any:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "asgard",
-        },
-    )
+def _read_json(url: str, token: str | None, opener: Any, transport: "_Transport") -> Any:
+    while True:
+        request = _request(url, token)
+        try:
+            with opener(request, timeout=10) as response:
+                payload = json.loads(response.read().decode())
+                headers = getattr(response, "headers", None)
+        except urllib.error.HTTPError as exc:
+            headers = getattr(exc, "headers", None)
+            _note_anonymous(token, headers, transport)
+            if exc.code in (403, 429) and _pause(headers, transport, on_error=True):
+                exc.close()
+                continue
+            raise ConfigError(_github_error(exc, token)) from None
+        _note_anonymous(token, headers, transport)
+        _pause(headers, transport, on_error=False)
+        return payload
+
+
+def _request(url: str, token: str | None) -> urllib.request.Request:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "asgard",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return urllib.request.Request(url, headers=headers)
+
+
+class _Transport:
+    def __init__(
+        self,
+        sleep: Callable[[float], None],
+        emit: Callable[[Event], None] | None,
+        now: Callable[[], float],
+    ) -> None:
+        self.sleep = sleep
+        self.emit = emit or _ignore
+        self.now = now
+        self.anonymous_warned = False
+
+
+def _ignore(_event: Event) -> None:
+    return None
+
+
+def _note_anonymous(token: str | None, headers: Any, transport: _Transport) -> None:
+    if token or transport.anonymous_warned:
+        return
+    if _header(headers, "X-RateLimit-Limit") != "60":
+        return
+    transport.anonymous_warned = True
+    transport.emit(Error(message=_ANONYMOUS_LIMIT))
+
+
+def _pause(headers: Any, transport: _Transport, *, on_error: bool) -> bool:
+    wait = _wait_seconds(headers, transport.now(), on_error=on_error)
+    if wait is None or wait <= 0:
+        return False
+    transport.emit(RateLimited(wait_seconds=wait))
+    transport.sleep(wait)
+    return True
+
+
+def _wait_seconds(headers: Any, now: float, *, on_error: bool) -> float | None:
+    if on_error:
+        retry_after = _header(headers, "Retry-After")
+        if retry_after is not None:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass
+    if _header(headers, "X-RateLimit-Remaining") != "0":
+        return None
+    reset = _header(headers, "X-RateLimit-Reset")
+    if reset is None:
+        return None
     try:
-        with opener(request, timeout=10) as response:
-            return json.loads(response.read().decode())
-    except urllib.error.HTTPError as exc:
-        raise ConfigError(_github_error(exc, token)) from None
+        return max(0.0, float(reset) - now)
+    except ValueError:
+        return None
+
+
+def _header(headers: Any, name: str) -> str | None:
+    if headers is None:
+        return None
+    getter = getattr(headers, "get", None)
+    if getter is None:
+        return None
+    value = getter(name)
+    if value is None:
+        value = getter(name.lower())
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _cache_hit(path: Path, updated_at: Any) -> bool:
@@ -214,7 +345,7 @@ def _created_on(pr: dict[str, Any]) -> date | None:
     return date.fromisoformat(raw[:10])
 
 
-def _github_error(exc: urllib.error.HTTPError, token: str) -> str:
+def _github_error(exc: urllib.error.HTTPError, token: str | None) -> str:
     if exc.code == 401:
         return "invalid GitHub token"
     if exc.code == 404:

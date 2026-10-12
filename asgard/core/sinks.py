@@ -15,6 +15,7 @@ from asgard.core.events import (
     LoopFinished,
     PRFiltered,
     PRMined,
+    RateLimited,
     StageFinished,
     StageStarted,
     SynthesisChunk,
@@ -72,6 +73,8 @@ class CLIProgressSink:
             self._complete()
         elif isinstance(event, Error):
             self.progress.console.print(event.message)
+        elif isinstance(event, RateLimited):
+            self.progress.console.print(f"waiting {event.wait_seconds:g}s")
         elif isinstance(event, _ITEM_EVENTS) and self._task is not None:
             self.progress.advance(self._task)
 

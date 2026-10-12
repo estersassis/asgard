@@ -26,6 +26,11 @@ class PRMined(Event):
     pr_id: str
 
 
+class RateLimited(Event):
+    type: Literal["RateLimited"] = "RateLimited"
+    wait_seconds: float
+
+
 class PRFiltered(Event):
     type: Literal["PRFiltered"] = "PRFiltered"
     pr_id: str
