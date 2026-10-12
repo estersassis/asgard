@@ -5,7 +5,7 @@ description = "Generate evidence-based SECURITY.md files from GitHub pull reques
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2", "rich"]
+dependencies = ["pydantic>=2", "rich", "google-genai", "openai", "anthropic"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
@@ -22,6 +22,8 @@ include = ["asgard*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["-m", "not smoke"]
+markers = ["smoke: live provider calls, skipped in the default run"]
 
 [tool.ruff]
 target-version = "py311"
