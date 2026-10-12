@@ -17,8 +17,13 @@ KEY = "sk-test-key"
 
 
 class _Response:
-    def __init__(self, headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        headers: dict[str, str] | None = None,
+        body: bytes = b"{}",
+    ) -> None:
         self.headers = headers or {"X-OAuth-Scopes": "repo"}
+        self._body = body
 
     def __enter__(self) -> "_Response":
         return self
@@ -27,7 +32,7 @@ class _Response:
         return None
 
     def read(self) -> bytes:
-        return b"{}"
+        return self._body
 
 
 def _http_error(url: str, code: int, body: bytes = b"") -> urllib.error.HTTPError:
@@ -133,7 +138,10 @@ def test_saved_config_reloads_without_secrets(
 def test_cli_run_config_matches_saved_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     monkeypatch.setattr("asgard.core.config.load_dotenv", lambda path=Path(".env"): None)
-    monkeypatch.setattr("asgard.core.config.urllib.request.urlopen", _ok)
+    monkeypatch.setattr(
+        "asgard.core.config.urllib.request.urlopen",
+        lambda request, timeout=10: _Response(body=b"[]"),
+    )
     source = _settings(tmp_path)
     out = tmp_path / "out"
     main(

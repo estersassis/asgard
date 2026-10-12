@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import Protocol
 
 from rich.console import Console
-from rich.progress import Progress, TaskID
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskID,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from asgard.core.events import (
     ClassificationAttempt,
@@ -56,7 +63,13 @@ class LoggingSink:
 
 class CLIProgressSink:
     def __init__(self, console: Console | None = None) -> None:
-        self.progress = Progress(console=console or Console(stderr=True))
+        self.progress = Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console or Console(stderr=True),
+        )
         self._task: TaskID | None = None
 
     def __enter__(self) -> "CLIProgressSink":

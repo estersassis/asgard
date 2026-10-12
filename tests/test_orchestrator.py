@@ -145,9 +145,13 @@ def test_sinks_receive_events(tmp_path: Path, caplog: pytest.LogCaptureFixture) 
     console = Console(file=stream, force_terminal=True, width=80)
     with CLIProgressSink(console) as sink:
         sink.handle(started)
+        task = sink.progress.tasks[0]
+        task.start_time = task.get_time() - 90
         sink.handle(ClassificationAttempt(pr_id="9"))
         sink.handle(StageFinished(stage="mine"))
-    assert "mine" in stream.getvalue()
+    rendered = stream.getvalue()
+    assert "mine" in rendered
+    assert "0:01:30" in rendered
 
     stream = StringIO()
     console = Console(file=stream, force_terminal=True, width=80)
