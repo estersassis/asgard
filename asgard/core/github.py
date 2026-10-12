@@ -4,6 +4,7 @@ import json
 import urllib.error
 import urllib.request
 from datetime import date
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -43,6 +44,38 @@ def list_pulls(
         if len(batch) < _PAGE_SIZE:
             return found
         page += 1
+
+
+def cache_pulls(
+    run_dir: Path,
+    repo: str,
+    token: str,
+    pulls: list[dict[str, Any]],
+    *,
+    opener: Any = None,
+) -> list[int]:
+    """Store each pull under ``run_dir/mine/prs`` and return their numbers.
+
+    A file is reused when its ``updated_at`` matches the listing. An empty
+    listing writes an empty number list and does not fetch.
+    """
+    pr_dir = Path(run_dir) / "mine" / "prs"
+    pr_dir.mkdir(parents=True, exist_ok=True)
+    numbers: list[int] = []
+    for pr in pulls:
+        number = pr.get("number")
+        if not isinstance(number, int):
+            raise ConfigError("github pull number was not an int")
+        numbers.append(number)
+        path = pr_dir / f"{number}.json"
+        listed_at = pr.get("updated_at")
+        if _cache_hit(path, listed_at):
+            continue
+        fetched = fetch_pull(repo, number, token, opener=opener)
+        fetched["updated_at"] = listed_at
+        _write_json(path, fetched)
+    _write_json(Path(run_dir) / "mine" / "output.json", numbers)
+    return numbers
 
 
 def fetch_pull(
@@ -116,6 +149,23 @@ def _read_json(url: str, token: str, opener: Any) -> Any:
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         raise ConfigError(_github_error(exc, token)) from None
+
+
+def _cache_hit(path: Path, updated_at: Any) -> bool:
+    if not isinstance(updated_at, str) or not path.is_file():
+        return False
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    return isinstance(cached, dict) and cached.get("updated_at") == updated_at
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    temporary.replace(path)
 
 
 def _threads(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:

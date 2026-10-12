@@ -5,11 +5,12 @@ import json
 import urllib.error
 import urllib.request
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from asgard.core.config import ConfigError
-from asgard.core.github import fetch_pull, list_pulls
+from asgard.core.github import cache_pulls, fetch_pull, list_pulls
 
 TOKEN = "ghp_secret"
 
@@ -143,6 +144,43 @@ def test_fetch_pull_joins_discussion_and_keeps_deleted_users() -> None:
     assert "/pulls/7/comments?per_page=100&page=1" in seen[3]
     assert "/pulls/7/comments?per_page=100&page=2" in seen[4]
     assert len(seen) == 5
+
+
+def test_cache_skips_fetch_until_updated_at_changes(tmp_path: Path) -> None:
+    seen: list[str] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        seen.append(request.full_url)
+        if request.full_url.endswith("/pulls/7"):
+            body = {"number": 7, "body": "the change", "updated_at": "from-detail"}
+            return _Response(json.dumps(body).encode())
+        return _Response(b"[]")
+
+    listing = [{"number": 7, "updated_at": "2024-01-01T00:00:00Z"}]
+    assert cache_pulls(tmp_path, "jpadilla/pyjwt", TOKEN, listing, opener=opener) == [7]
+    saved = json.loads((tmp_path / "mine" / "prs" / "7.json").read_text(encoding="utf-8"))
+    assert saved["updated_at"] == "2024-01-01T00:00:00Z"
+    assert saved["body"] == "the change"
+    assert json.loads((tmp_path / "mine" / "output.json").read_text(encoding="utf-8")) == [7]
+    calls = len(seen)
+
+    assert cache_pulls(tmp_path, "jpadilla/pyjwt", TOKEN, listing, opener=opener) == [7]
+    assert len(seen) == calls
+
+    changed = [{"number": 7, "updated_at": "2024-02-01T00:00:00Z"}]
+    assert cache_pulls(tmp_path, "jpadilla/pyjwt", TOKEN, changed, opener=opener) == [7]
+    assert len(seen) > calls
+    saved = json.loads((tmp_path / "mine" / "prs" / "7.json").read_text(encoding="utf-8"))
+    assert saved["updated_at"] == "2024-02-01T00:00:00Z"
+
+
+def test_empty_pull_list_writes_an_empty_list(tmp_path: Path) -> None:
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        raise AssertionError(request.full_url)
+
+    assert cache_pulls(tmp_path, "jpadilla/pyjwt", TOKEN, [], opener=opener) == []
+    assert json.loads((tmp_path / "mine" / "output.json").read_text(encoding="utf-8")) == []
+    assert list((tmp_path / "mine" / "prs").glob("*.json")) == []
 
 
 def test_fetch_pull_does_not_echo_the_token() -> None:
