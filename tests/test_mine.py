@@ -261,6 +261,56 @@ def test_run_mines_after_saving_config(
     ]
 
 
+def test_run_from_normalize_uses_the_saved_mine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    monkeypatch.setattr("asgard.core.config.load_dotenv", lambda path=Path(".env"): None)
+    out = tmp_path / "out"
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "jpadilla/pyjwt"',
+                f'output_dir = "{out}"',
+                "",
+                "[llm.default]",
+                'provider = "fake"',
+                'model = "fake"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    seen: list[str] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        seen.append(request.full_url)
+        if "/pulls?" in request.full_url:
+            return _Response(json.dumps([_pull(4, "2024-01-01")]).encode())
+        if request.full_url.endswith("/pulls/4"):
+            return _Response(json.dumps({"number": 4, "body": "change"}).encode())
+        return _Response(b"[]")
+
+    with pytest.raises(SystemExit) as caught:
+        main(["run", "--config", str(source), "--from", "normalize"], opener=opener)
+    assert caught.value.code == 2
+    assert "previous stage is not done: mine" in capsys.readouterr().err
+    assert not any("/pulls" in url for url in seen)
+
+    main(["run", "--config", str(source), "--max-prs", "1"], opener=opener)
+    normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
+    (out / "normalize" / "output.json").unlink()
+    (out / "normalize" / "items.jsonl").unlink()
+    calls = len(seen)
+    main(["run", "--config", str(out / "config.json"), "--from", "normalize"], opener=opener)
+    assert len(seen) == calls + 1
+    assert "/pulls" not in seen[-1]
+    assert json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8")) == normalized
+
+
 @pytest.mark.smoke
 @pytest.mark.skipif(
     not os.getenv("GITHUB_TOKEN"),
