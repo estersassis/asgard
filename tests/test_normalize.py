@@ -1,6 +1,14 @@
 """GraphQL dumps and mined REST pulls normalize to the same document."""
 
+import json
+from pathlib import Path
+
+import pytest
+
+from asgard.core.events import Error, StageFinished, StageStarted
 from asgard.core.normalization import NormalizedPullRequest, format_pull
+from asgard.core.orchestrator import Orchestrator
+from asgard.core.stages.normalize import NormalizeStage
 
 NODE_ID = "MDExOlB1bGxSZXF1ZXN0MjA0NjQ2NTU="
 DESCRIPTION = "See https://code.djangoproject.com/ticket/23381#ticket\n"
@@ -95,10 +103,14 @@ def test_long_body_is_kept_character_for_character() -> None:
         "threads": [],
     }
 
-    assert format_pull(dump)["description"] == body
-    assert format_pull(dump)["general_discussion"] == [comment]
-    assert format_pull(rest)["description"] == body
-    assert format_pull(rest)["general_discussion"] == [comment]
+    from_dump = format_pull(dump)
+    from_rest = format_pull(rest)
+    assert from_dump["description"] == body
+    assert from_dump["general_discussion"] == [comment]
+    assert from_rest["description"] == body
+    assert from_rest["general_discussion"] == [comment]
+    NormalizedPullRequest.model_validate(from_dump)
+    NormalizedPullRequest.model_validate(from_rest)
 
 
 def test_null_bodies_become_empty_and_blank_comments_drop() -> None:
@@ -253,6 +265,142 @@ def test_dump_timeline_order_is_preserved() -> None:
 
     assert formatted["general_discussion"] == ["listed first", "listed second"]
     assert formatted["context"]["state"] == "MERGED"
+    NormalizedPullRequest.model_validate(formatted)
+
+
+def test_published_schema_matches_the_model() -> None:
+    path = (
+        Path(__file__).resolve().parents[1] / "asgard" / "schemas" / "normalized_pr.schema.json"
+    )
+    published = json.loads(path.read_text(encoding="utf-8"))
+    assert published == NormalizedPullRequest.model_json_schema()
+    documents = (
+        format_pull(_dump_3135()),
+        format_pull(_rest_3135()),
+        format_pull(_rest_note(9)),
+    )
+    for document in documents:
+        NormalizedPullRequest.model_validate(document)
+
+
+def test_normalize_stage_writes_output_and_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numbers = [3135, 2046, 9]
+    _write_mined(
+        tmp_path,
+        {3135: _rest_3135(), 2046: _rest_note(2046, merged=True), 9: _rest_note(9)},
+    )
+    calls: list[str] = []
+    real = format_pull
+
+    def spy(payload: dict, *, repo: str | None = None) -> dict:
+        calls.append(str(payload.get("node_id")))
+        return real(payload, repo=repo)
+
+    monkeypatch.setattr("asgard.core.stages.normalize.format_pull", spy)
+    sink = _Sink()
+    result = Orchestrator([NormalizeStage(repo="django/django")], [sink]).run(
+        tmp_path,
+        data=numbers,
+    )
+
+    assert calls == [NODE_ID, "node-2046", "node-9"]
+    assert [type(event) for event in sink.events] == [StageStarted, StageFinished]
+    assert sink.events[0] == StageStarted(stage="normalize")
+    assert sink.events[1] == StageFinished(stage="normalize")
+    saved = json.loads((tmp_path / "normalize" / "output.json").read_text(encoding="utf-8"))
+    assert saved == result
+    assert result[0] == real(_rest_3135(), repo="django/django")
+    assert result[1]["context"]["state"] == "MERGED"
+    assert result[1]["description"] == "body 2046"
+    assert result[2]["general_discussion"] == ["note 9"]
+    for document in result:
+        NormalizedPullRequest.model_validate(document)
+
+    calls.clear()
+    sink.events.clear()
+    again = Orchestrator([NormalizeStage(repo="django/django")], [sink]).run(tmp_path, data=numbers)
+    assert again == result
+    assert calls == []
+    assert sink.events == [StageFinished(stage="normalize", skipped=True)]
+
+
+def test_normalize_stage_does_not_reformat_saved_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numbers = [3135, 40, 41]
+    _write_mined(
+        tmp_path,
+        {3135: _rest_3135(), 40: _rest_note(40), 41: _rest_note(41, merged=True)},
+    )
+    calls: list[str] = []
+    real = format_pull
+
+    def fail_on_second(payload: dict, *, repo: str | None = None) -> dict:
+        node = str(payload.get("node_id"))
+        calls.append(node)
+        if node == "node-40":
+            raise RuntimeError("stopped")
+        return real(payload, repo=repo)
+
+    monkeypatch.setattr("asgard.core.stages.normalize.format_pull", fail_on_second)
+    sink = _Sink()
+    with pytest.raises(RuntimeError, match="stopped"):
+        Orchestrator([NormalizeStage()], [sink]).run(tmp_path, data=numbers)
+    assert calls == [NODE_ID, "node-40"]
+    assert not (tmp_path / "normalize" / "output.json").exists()
+    assert any(isinstance(event, Error) and event.stage == "normalize" for event in sink.events)
+
+    calls.clear()
+
+    def counting(payload: dict, *, repo: str | None = None) -> dict:
+        calls.append(str(payload.get("node_id")))
+        return real(payload, repo=repo)
+
+    monkeypatch.setattr("asgard.core.stages.normalize.format_pull", counting)
+    sink.events.clear()
+    result = Orchestrator([NormalizeStage()], [sink]).run(tmp_path, data=numbers)
+    assert calls == ["node-40", "node-41"]
+    assert [type(event) for event in sink.events] == [StageStarted, StageFinished]
+    assert result[0]["context"]["pr_id"] == NODE_ID
+    assert result[1]["context"]["pr_id"] == "node-40"
+    assert result[2]["context"]["state"] == "MERGED"
+    saved = json.loads((tmp_path / "normalize" / "output.json").read_text(encoding="utf-8"))
+    assert saved == result
+
+
+class _Sink:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def handle(self, event: object) -> None:
+        self.events.append(event)
+
+
+def _write_mined(directory: Path, pulls: dict[int, dict]) -> None:
+    folder = directory / "mine" / "prs"
+    folder.mkdir(parents=True)
+    for number, payload in pulls.items():
+        (folder / f"{number}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _rest_note(number: int, *, merged: bool = False) -> dict:
+    return {
+        "node_id": f"node-{number}",
+        "title": f"pull {number}",
+        "state": "closed" if merged else "open",
+        "merged": merged,
+        "body": f"body {number}",
+        "base": {"repo": {"full_name": "django/django"}},
+        "issue_comments": [
+            {"body": f"note {number}", "created_at": "2014-09-01T00:00:00Z"},
+        ],
+        "reviews": [{"body": "review body stays out"}],
+        "threads": [],
+    }
 
 
 def _dump_3135() -> dict:

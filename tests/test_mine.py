@@ -228,8 +228,20 @@ def test_run_mines_after_saving_config(
         json.loads(line)
         for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert [event["type"] for event in events] == ["StageStarted", "PRMined", "StageFinished"]
+    assert [event["type"] for event in events] == [
+        "StageStarted",
+        "PRMined",
+        "StageFinished",
+        "StageStarted",
+        "StageFinished",
+    ]
+    assert events[0]["stage"] == "mine"
     assert events[1]["pr_id"] == "4"
+    assert events[3]["stage"] == "normalize"
+    assert events[4] == {"type": "StageFinished", "stage": "normalize", "skipped": False}
+    normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
+    assert normalized[0]["description"] == "change"
+    assert normalized[0]["context"]["repository"] == "jpadilla/pyjwt"
     captured = capsys.readouterr()
     assert captured.out == ""
     assert TOKEN not in captured.err
@@ -242,8 +254,11 @@ def test_run_mines_after_saving_config(
     finished = [
         json.loads(line)
         for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    ][-1]
-    assert finished == {"type": "StageFinished", "stage": "mine", "skipped": True}
+    ][-2:]
+    assert finished == [
+        {"type": "StageFinished", "stage": "mine", "skipped": True},
+        {"type": "StageFinished", "stage": "normalize", "skipped": True},
+    ]
 
 
 @pytest.mark.smoke

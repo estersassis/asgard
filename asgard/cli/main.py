@@ -11,6 +11,7 @@ from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.sinks import CLIProgressSink, JSONLSink, LoggingSink
 from asgard.core.stages.mine import MineStage
+from asgard.core.stages.normalize import NormalizeStage
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
 
@@ -27,22 +28,21 @@ def main(argv: list[str] | None = None, *, opener: Any = None) -> None:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
     try:
-        _run_mine(config, opener)
+        _run_pipeline(config, opener)
     except ConfigError:
         raise SystemExit(2) from None
 
 
-def _run_mine(config: RunConfig, opener: Any) -> None:
+def _run_pipeline(config: RunConfig, opener: Any) -> None:
     sinks = [
         CLIProgressSink(),
         JSONLSink(config.output_dir / "events.jsonl"),
         LoggingSink(),
     ]
-    Orchestrator([MineStage(opener=opener)], sinks).run(
-        config.output_dir,
-        only="mine",
-        data=config,
-    )
+    Orchestrator(
+        [MineStage(opener=opener), NormalizeStage(repo=config.repo)],
+        sinks,
+    ).run(config.output_dir, data=config)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -53,7 +53,10 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     sub = parser.add_subparsers(dest="command")
-    run = sub.add_parser("run", help="validate settings, save them, and mine pull requests")
+    run = sub.add_parser(
+        "run",
+        help="validate settings, save them, mine pull requests, and normalize them",
+    )
     run.add_argument("repo", nargs="?")
     run.add_argument("--config", type=Path)
     run.add_argument("--output-dir")
