@@ -14,7 +14,6 @@ STAGE_NAMES = (
     "normalize",
     "prefilter",
     "classify",
-    "evaluate",
     "consolidate",
     "synthesize",
     "security_md",

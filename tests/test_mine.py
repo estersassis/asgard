@@ -21,6 +21,7 @@ from asgard.core.config import Filters, RunConfig
 from asgard.core.events import PRMined, StageFinished, StageStarted
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.stages.mine import MineStage
+from asgard.providers.handlers.fake import FakeHandler
 from asgard.providers.models import LLMSettings, RoleSpec
 
 TOKEN = "ghp_secret"
@@ -57,6 +58,26 @@ def _config(directory: Path, **filters: object) -> RunConfig:
         filters=Filters(**filters),
         output_dir=directory,
     )
+
+
+def _approved_handler() -> FakeHandler:
+    classification = json.dumps(
+        {
+            "has_security_discussion": False,
+            "evidence": [],
+            "rationale": "checked",
+        }
+    )
+    findings = [
+        {
+            "criterion": criterion,
+            "passed": True,
+            "explanation": f"{criterion} checked",
+        }
+        for criterion in ("decision", "evidence", "completeness", "rationale")
+    ]
+    verdict = json.dumps({"verdict": "APPROVE", "findings": findings, "feedback": ""})
+    return FakeHandler([classification, verdict])
 
 
 def _pull(number: int, day: str, updated_at: str = "2024-01-01T00:00:00Z") -> dict[str, object]:
@@ -216,6 +237,7 @@ def test_run_mines_after_saving_config(
     main(
         ["run", "--config", str(source), "--max-prs", "1"],
         opener=opener,
+        handlers={"fake": _approved_handler()},
     )
     saved = json.loads((out / "config.json").read_text(encoding="utf-8"))
     assert saved["repo"] == "jpadilla/pyjwt"
@@ -234,11 +256,18 @@ def test_run_mines_after_saving_config(
         "StageFinished",
         "StageStarted",
         "StageFinished",
+        "StageStarted",
+        "ClassificationAttempt",
+        "EvaluatorVerdict",
+        "LoopFinished",
+        "StageFinished",
     ]
     assert events[0]["stage"] == "mine"
     assert events[1]["pr_id"] == "4"
     assert events[3]["stage"] == "normalize"
     assert events[4] == {"type": "StageFinished", "stage": "normalize", "skipped": False}
+    assert events[5]["stage"] == "classify"
+    assert events[9] == {"type": "StageFinished", "stage": "classify", "skipped": False}
     normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
     assert normalized[0]["description"] == "change"
     assert normalized[0]["context"]["repository"] == "jpadilla/pyjwt"
@@ -248,16 +277,21 @@ def test_run_mines_after_saving_config(
     assert TOKEN not in (out / "events.jsonl").read_text(encoding="utf-8")
 
     calls = len(seen)
-    main(["run", "--config", str(out / "config.json")], opener=opener)
+    main(
+        ["run", "--config", str(out / "config.json")],
+        opener=opener,
+        handlers={"fake": _approved_handler()},
+    )
     assert len(seen) == calls + 1
     assert not seen[-1].endswith("/pulls/4")
     finished = [
         json.loads(line)
         for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    ][-2:]
+    ][-3:]
     assert finished == [
         {"type": "StageFinished", "stage": "mine", "skipped": True},
         {"type": "StageFinished", "stage": "normalize", "skipped": True},
+        {"type": "StageFinished", "stage": "classify", "skipped": True},
     ]
 
 
@@ -295,17 +329,29 @@ def test_run_from_normalize_uses_the_saved_mine(
         return _Response(b"[]")
 
     with pytest.raises(SystemExit) as caught:
-        main(["run", "--config", str(source), "--from", "normalize"], opener=opener)
+        main(
+            ["run", "--config", str(source), "--from", "normalize"],
+            opener=opener,
+            handlers={"fake": _approved_handler()},
+        )
     assert caught.value.code == 2
     assert "previous stage is not done: mine" in capsys.readouterr().err
     assert not any("/pulls" in url for url in seen)
 
-    main(["run", "--config", str(source), "--max-prs", "1"], opener=opener)
+    main(
+        ["run", "--config", str(source), "--max-prs", "1"],
+        opener=opener,
+        handlers={"fake": _approved_handler()},
+    )
     normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
     (out / "normalize" / "output.json").unlink()
     (out / "normalize" / "items.jsonl").unlink()
     calls = len(seen)
-    main(["run", "--config", str(out / "config.json"), "--from", "normalize"], opener=opener)
+    main(
+        ["run", "--config", str(out / "config.json"), "--from", "normalize"],
+        opener=opener,
+        handlers={"fake": _approved_handler()},
+    )
     assert len(seen) == calls + 1
     assert "/pulls" not in seen[-1]
     assert json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8")) == normalized
@@ -352,7 +398,8 @@ def test_live_public_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
             "fake",
             "--model",
             "fake",
-        ]
+        ],
+        handlers={"fake": _approved_handler()},
     )
     numbers = json.loads((out / "mine" / "output.json").read_text(encoding="utf-8"))
     assert len(numbers) == 1
