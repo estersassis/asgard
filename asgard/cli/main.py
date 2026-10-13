@@ -10,14 +10,21 @@ from pydantic import ValidationError
 from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.sinks import CLIProgressSink, JSONLSink, LoggingSink
+from asgard.core.stages.classify import ClassifyStage
 from asgard.core.stages.mine import MineStage
 from asgard.core.stages.normalize import NormalizeStage
+from asgard.providers.factory import LLMFactory
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
-_PIPELINE = ("mine", "normalize")
+_PIPELINE = ("mine", "normalize", "classify")
 
 
-def main(argv: list[str] | None = None, *, opener: Any = None) -> None:
+def main(
+    argv: list[str] | None = None,
+    *,
+    opener: Any = None,
+    handlers: dict[str, Any] | None = None,
+) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command != "run":
@@ -29,19 +36,30 @@ def main(argv: list[str] | None = None, *, opener: Any = None) -> None:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
     try:
-        _run_pipeline(config, opener, start=args.start)
+        _run_pipeline(config, opener, handlers, start=args.start)
     except (ConfigError, ValueError) as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
 
 
-def _run_pipeline(config: RunConfig, opener: Any, *, start: str | None = None) -> None:
+def _run_pipeline(
+    config: RunConfig,
+    opener: Any,
+    handlers: dict[str, Any] | None,
+    *,
+    start: str | None = None,
+) -> None:
     sinks = [
         CLIProgressSink(),
         JSONLSink(config.output_dir / "events.jsonl"),
         LoggingSink(),
     ]
-    stages = [MineStage(opener=opener), NormalizeStage(repo=config.repo)]
+    factory = LLMFactory(config.llm, handlers=handlers)
+    stages = [
+        MineStage(opener=opener),
+        NormalizeStage(repo=config.repo),
+        ClassifyStage(config.max_iterations, factory),
+    ]
     Orchestrator(stages, sinks).run(
         config.output_dir,
         start=start,
@@ -59,7 +77,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser(
         "run",
-        help="validate settings, save them, mine pull requests, and normalize them",
+        help="validate settings, save them, mine pull requests, normalize them, and classify them",
     )
     run.add_argument("repo", nargs="?")
     run.add_argument(
