@@ -1,0 +1,245 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASGARD — Marca</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --stone:#E3E1D4;
+    --panel:#EDEBDE;
+    --ink:#23261F;
+    --ink-soft:#5B5E52;
+    --line:#C6C4B2;
+    --ember:#B8722E;
+    --ember-deep:#8C551E;
+    --verdict-yes:#4C8B5D;
+    --verdict-no:#B14A3A;
+    --serif:'Fraunces', Georgia, serif;
+    --mono:'JetBrains Mono', Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --stone:#191B1F; --panel:#202327; --ink:#E8E6D9; --ink-soft:#8D9082; --line:#33362F;
+      --ember:#D68C42; --ember-deep:#F0AC63; --verdict-yes:#6FB981; --verdict-no:#D97862;
+    }
+  }
+  :root[data-theme="dark"]{
+    --stone:#191B1F; --panel:#202327; --ink:#E8E6D9; --ink-soft:#8D9082; --line:#33362F;
+    --ember:#D68C42; --ember-deep:#F0AC63; --verdict-yes:#6FB981; --verdict-no:#D97862;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:var(--stone);color:var(--ink);font-family:var(--mono);font-size:13px;line-height:1.5;}
+  .wrap{max-width:880px;margin:0 auto;padding:0 24px;}
+
+  .topbar{display:flex;justify-content:space-between;align-items:center;max-width:880px;margin:0 auto;padding:16px 24px;color:var(--ink-soft);font-size:12px;}
+  .theme-btn{font-family:var(--mono);font-size:12px;color:var(--ink-soft);background:transparent;border:1px solid var(--line);border-radius:3px;padding:4px 10px;cursor:pointer;}
+  .theme-btn:hover{color:var(--ink);border-color:var(--ember);}
+  .theme-btn:focus-visible{outline:2px solid var(--ember);outline-offset:2px;}
+
+  h2{font-family:var(--mono);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin:0 0 16px;}
+  section{padding:36px 0;border-top:1px solid var(--line);}
+
+  /* logo */
+  .logo-main{display:flex;align-items:center;gap:28px;padding:40px 0 48px;}
+  .wordmark{font-family:var(--serif);font-weight:700;font-size:clamp(44px,9vw,84px);letter-spacing:.01em;margin:0;}
+
+  /* variations */
+  .var-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}
+  .var{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:22px;display:flex;flex-direction:column;gap:18px;align-items:flex-start;min-height:130px;}
+  .var.dark{background:#191B1F;border-color:#33362F;--ember:#D68C42;--ember-deep:#F0AC63;--verdict-yes:#6FB981;--verdict-no:#D97862;--ink:#E8E6D9;--stone:#191B1F;--ink-soft:#8D9082;}
+  .var .label{font-size:11px;color:var(--ink-soft);}
+  .row{display:flex;align-items:center;gap:12px;}
+  .row .wm{font-family:var(--serif);font-weight:700;font-size:26px;}
+  .stack{display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+  .stack .wm{font-family:var(--serif);font-weight:700;font-size:20px;}
+  .wm-only{font-family:var(--serif);font-weight:700;font-size:26px;}
+
+  /* colors */
+  .col-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;}
+  .sw{border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--panel);display:flex;}
+  .sw-chip{width:72px;flex-shrink:0;}
+  .sw-dual{width:72px;flex-shrink:0;display:flex;flex-direction:column;}
+  .sw-dual div{flex:1;}
+  .sw-info{padding:12px 14px;display:flex;flex-direction:column;gap:2px;}
+  .sw-name{font-weight:600;font-size:13px;}
+  .sw-hex{font-size:12px;color:var(--ink-soft);}
+  .sw-use{font-size:11px;color:var(--ink-soft);}
+
+  footer{padding:28px 0 48px;font-size:11px;color:var(--ink-soft);border-top:1px solid var(--line);}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gateStone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" style="stop-color:var(--ember)"/>
+      <stop offset="1" style="stop-color:var(--ember-deep)"/>
+    </linearGradient>
+    <filter id="gateShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="1.4" stdDeviation="1.3" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+    <symbol id="gate-icon" viewBox="0 0 100 92">
+      <ellipse cx="50" cy="90.5" rx="35" ry="3" fill="var(--ink)" opacity="0.12"/>
+      <g filter="url(#gateShadow)">
+        <rect x="15" y="40" width="13" height="49" rx="1" fill="url(#gateStone)"/>
+        <line x1="15" y1="52" x2="28" y2="52" stroke="var(--stone)" stroke-opacity="0.45" stroke-width="1"/>
+        <line x1="15" y1="64" x2="28" y2="64" stroke="var(--stone)" stroke-opacity="0.45" stroke-width="1"/>
+        <line x1="15" y1="76" x2="28" y2="76" stroke="var(--stone)" stroke-opacity="0.45" stroke-width="1"/>
+        <rect x="15" y="40" width="2.4" height="49" fill="#FFFFFF" opacity="0.14"/>
+        <rect x="72" y="40" width="13" height="49" rx="1" fill="url(#gateStone)"/>
+        <line x1="72" y1="52" x2="85" y2="52" stroke="var(--stone)" stroke-opacity="0.45" stroke-width="1"/>
+        <line x1="72" y1="64" x2="85" y2="64" stroke="var(--stone)" stroke-opacity="0.45" stroke-width="1"/>
+        <line x1="72" y1="76" x2="85" y2="76" stroke="var(--stone)" stroke-opacity="0.45" stroke-width="1"/>
+        <rect x="82.6" y="40" width="2.4" height="49" fill="#000000" opacity="0.14"/>
+        <path d="M17 41 L36 20 L50 11 L64 20 L83 41" fill="none" stroke="url(#gateStone)" stroke-width="11" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M17 39.4 L36 18.4 L50 9.4 L64 18.4 L83 39.4" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <line x1="36" y1="20" x2="36" y2="41" stroke="var(--stone)" stroke-opacity="0.5" stroke-width="1"/>
+        <line x1="64" y1="20" x2="64" y2="41" stroke="var(--stone)" stroke-opacity="0.5" stroke-width="1"/>
+        <polygon points="50,3 41,14 50,25" fill="var(--verdict-no)" stroke="var(--ink)" stroke-opacity="0.5" stroke-width="1"/>
+        <polygon points="50,3 59,14 50,25" fill="var(--verdict-yes)" stroke="var(--ink)" stroke-opacity="0.5" stroke-width="1"/>
+        <line x1="50" y1="3" x2="45.5" y2="9" stroke="#FFFFFF" stroke-opacity="0.35" stroke-width="1.3" stroke-linecap="round"/>
+        <line x1="50" y1="3" x2="54.5" y2="9" stroke="#FFFFFF" stroke-opacity="0.35" stroke-width="1.3" stroke-linecap="round"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="topbar">
+  <span>ASGARD / marca</span>
+  <button class="theme-btn" id="themeToggle" type="button">tema escuro</button>
+</div>
+
+<div class="wrap">
+
+  <div class="logo-main">
+    <svg width="120" height="110" viewBox="0 0 100 92" aria-hidden="true"><use href="#gate-icon"/></svg>
+    <h1 class="wordmark">ASGARD</h1>
+  </div>
+
+  <section>
+    <h2>Variações</h2>
+    <div class="var-grid">
+      <div class="var">
+        <span class="label">horizontal</span>
+        <div class="row">
+          <svg width="38" height="35" viewBox="0 0 100 92" aria-hidden="true"><use href="#gate-icon"/></svg>
+          <span class="wm">ASGARD</span>
+        </div>
+      </div>
+      <div class="var">
+        <span class="label">empilhado</span>
+        <div class="stack">
+          <svg width="34" height="31" viewBox="0 0 100 92" aria-hidden="true"><use href="#gate-icon"/></svg>
+          <span class="wm">ASGARD</span>
+        </div>
+      </div>
+      <div class="var">
+        <span class="label">ícone</span>
+        <svg width="44" height="40" viewBox="0 0 100 92" aria-hidden="true"><use href="#gate-icon"/></svg>
+      </div>
+      <div class="var">
+        <span class="label">wordmark</span>
+        <span class="wm-only">ASGARD</span>
+      </div>
+      <div class="var dark">
+        <span class="label">horizontal — fundo escuro</span>
+        <div class="row">
+          <svg width="38" height="35" viewBox="0 0 100 92" aria-hidden="true"><use href="#gate-icon"/></svg>
+          <span class="wm" style="color:#E8E6D9;">ASGARD</span>
+        </div>
+      </div>
+      <div class="var dark">
+        <span class="label">ícone — fundo escuro</span>
+        <svg width="44" height="40" viewBox="0 0 100 92" aria-hidden="true"><use href="#gate-icon"/></svg>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Cores</h2>
+    <div class="col-grid">
+      <div class="sw">
+        <div class="sw-dual"><div style="background:#E3E1D4"></div><div style="background:#191B1F"></div></div>
+        <div class="sw-info">
+          <span class="sw-name">Fundo</span>
+          <span class="sw-hex">#E3E1D4 / #191B1F</span>
+          <span class="sw-use">claro / escuro</span>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-dual"><div style="background:#23261F"></div><div style="background:#E8E6D9"></div></div>
+        <div class="sw-info">
+          <span class="sw-name">Texto</span>
+          <span class="sw-hex">#23261F / #E8E6D9</span>
+          <span class="sw-use">claro / escuro</span>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-dual"><div style="background:#B8722E"></div><div style="background:#D68C42"></div></div>
+        <div class="sw-info">
+          <span class="sw-name">Forja</span>
+          <span class="sw-hex">#B8722E / #D68C42</span>
+          <span class="sw-use">marca, ícone, links</span>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-dual"><div style="background:#3C6E8C"></div><div style="background:#6FA8C7"></div></div>
+        <div class="sw-info">
+          <span class="sw-name">Bifröst</span>
+          <span class="sw-hex">#3C6E8C / #6FA8C7</span>
+          <span class="sw-use">acento secundário</span>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-dual"><div style="background:#4C8B5D"></div><div style="background:#6FB981"></div></div>
+        <div class="sw-info">
+          <span class="sw-name">Aprovado</span>
+          <span class="sw-hex">#4C8B5D / #6FB981</span>
+          <span class="sw-use">veredito positivo</span>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-dual"><div style="background:#B14A3A"></div><div style="background:#D97862"></div></div>
+        <div class="sw-info">
+          <span class="sw-name">Reprovado</span>
+          <span class="sw-hex">#B14A3A / #D97862</span>
+          <span class="sw-use">veredito negativo</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>Fontes: Fraunces 700 (wordmark), JetBrains Mono (interface).</footer>
+</div>
+
+<script>
+(function(){
+  var btn = document.getElementById('themeToggle');
+  var root = document.documentElement;
+  function apply(theme){
+    if(theme === 'dark' || theme === 'light'){ root.setAttribute('data-theme', theme); }
+    else { root.removeAttribute('data-theme'); }
+    btn.textContent = (root.getAttribute('data-theme') === 'dark') ? 'tema claro' : 'tema escuro';
+  }
+  var saved = null;
+  try { saved = localStorage.getItem('asgard-theme'); } catch(e){}
+  apply(saved);
+  btn.addEventListener('click', function(){
+    var next = (root.getAttribute('data-theme') === 'dark') ? 'light' : 'dark';
+    apply(next);
+    try { localStorage.setItem('asgard-theme', next); } catch(e){}
+  });
+})();
+</script>
+
+</body>
+</html>
+
+</body></html>
