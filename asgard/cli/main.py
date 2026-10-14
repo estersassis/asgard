@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.sinks import CLIProgressSink, JSONLSink, LoggingSink
+from asgard.core.stages.bundle import BundleStage
 from asgard.core.stages.classify import ClassifyStage
 from asgard.core.stages.consolidate import ConsolidateStage
 from asgard.core.stages.mine import MineStage
@@ -19,7 +20,15 @@ from asgard.core.stages.synthesize import SynthesizeStage
 from asgard.providers.factory import LLMFactory
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
-_PIPELINE = ("mine", "normalize", "classify", "consolidate", "synthesize", "security_md")
+_PIPELINE = (
+    "mine",
+    "normalize",
+    "classify",
+    "consolidate",
+    "synthesize",
+    "security_md",
+    "bundle",
+)
 
 
 def main(
@@ -65,6 +74,7 @@ def _run_pipeline(
         ConsolidateStage(config.include_unresolved),
         SynthesizeStage(config.repo, factory),
         SecurityMdStage(config.repo, config.llm, path=config.security_md),
+        BundleStage(config.export_xlsx),
     ]
     Orchestrator(stages, sinks).run(
         config.output_dir,
@@ -85,7 +95,8 @@ def _parser() -> argparse.ArgumentParser:
         "run",
         help=(
             "validate settings, save them, mine pull requests, normalize them, "
-            "classify them, consolidate them, synthesize the guideline, and write SECURITY.md"
+            "classify them, consolidate them, synthesize the guideline, "
+            "write SECURITY.md, and write a run manifest"
         ),
     )
     run.add_argument("repo", nargs="?")
@@ -101,6 +112,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--max-iterations", type=int)
     run.add_argument("--prefilter", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--include-unresolved", action=argparse.BooleanOptionalAction, default=None)
+    run.add_argument("--export-xlsx", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--state", choices=("open", "closed", "all"))
     run.add_argument("--merged-only", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--since")
@@ -129,6 +141,8 @@ def _overrides(args: argparse.Namespace) -> dict:
         data["prefilter"] = args.prefilter
     if args.include_unresolved is not None:
         data["include_unresolved"] = args.include_unresolved
+    if args.export_xlsx is not None:
+        data["export_xlsx"] = args.export_xlsx
     filters: dict = {}
     if args.state:
         filters["state"] = args.state

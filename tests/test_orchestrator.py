@@ -161,6 +161,7 @@ def test_sinks_receive_events(tmp_path: Path, caplog: pytest.LogCaptureFixture) 
     JSONLSink(path).handle(ClassificationAttempt(pr_id="9"))
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [line["type"] for line in lines] == ["StageStarted", "ClassificationAttempt"]
+    assert all(isinstance(line["at"], str) and line["at"] for line in lines)
 
     with caplog.at_level(logging.INFO, logger="asgard"):
         LoggingSink().handle(started)
