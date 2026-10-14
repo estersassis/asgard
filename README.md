@@ -41,7 +41,7 @@ Keep the first run small. With Ollama serving `llama3.1`:
 asgard run owner/name --max-prs 10 --provider ollama --model llama3.1
 ```
 
-`owner/name` may also be a `github.com` URL. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, classifies, consolidates, and synthesizes the guideline. Results land in `runs/owner__name/<utc-stamp>/`.
+`owner/name` may also be a `github.com` URL. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, classifies, consolidates, synthesizes the guideline, and writes `SECURITY.md`. Results land in `runs/owner__name/<utc-stamp>/`.
 
 To continue a finished prefix of that run:
 
@@ -49,7 +49,7 @@ To continue a finished prefix of that run:
 asgard run --config runs/owner__name/<utc-stamp>/config.json --from classify
 ```
 
-`--from` accepts `mine`, `normalize`, `classify`, `consolidate`, or `synthesize`. Every earlier stage must already have written its output.
+`--from` accepts `mine`, `normalize`, `classify`, `consolidate`, `synthesize`, or `security_md`. Every earlier stage must already have written its output.
 
 Consolidation does not call a model. It joins the classify summary, the normalized pull requests, and `classify/trace.jsonl`, then writes three files:
 
@@ -59,7 +59,9 @@ Consolidation does not call a model. It joins the classify summary, the normaliz
 
 `--include-unresolved` also sends unresolved and errored pull requests into that list when their final classification still has a security discussion. An error with no valid classification stays out. Approved pull requests without a security discussion stay out either way.
 
-Synthesis reads `consolidate/output.json` and writes the User Guideline to `synthesize/output.json`. One model call receives the whole list. Each recommendation cites pull requests from that list as `#123`. When the list is empty, the stage skips the model and writes a sentence: there was no security discussion, so there is no guideline. Writing `SECURITY.md` is a later stage.
+Synthesis reads `consolidate/output.json` and writes the User Guideline to `synthesize/output.json`. One model call receives the whole list. Each recommendation cites pull requests from that list as `#123`. When the list is empty, the stage skips the model and writes a sentence: there was no security discussion, so there is no guideline.
+
+The next stage writes `<run>/SECURITY.md`. Each citation written as `(#123)` or `(#123, #456)` becomes a link to `https://github.com/<owner>/<repo>/pull/123`. A hash that is part of the prose, such as PKCS #1, stays text. A footer records the ASGARD version, the UTC date, the repository, the model used for each role, how many pull requests were analysed, and how many security pull requests were used. A citation outside that approved set stays linked and is reported: one `CitationWarning` event, and the id in `security_md/output.json` under `unknown_citations`. `--security-md` writes the file somewhere else.
 
 ## Configuration
 
@@ -90,7 +92,8 @@ The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, 
 | --- | --- |
 | `repo` | `owner/name` or a github.com URL |
 | `--config` | TOML or JSON settings file |
-| `--from` | Resume at `mine`, `normalize`, `classify`, `consolidate`, or `synthesize` |
+| `--from` | Resume at `mine`, `normalize`, `classify`, `consolidate`, `synthesize`, or `security_md` |
+| `--security-md` | Where to write `SECURITY.md`. Default: `<run>/SECURITY.md` |
 | `--include-unresolved` | Also send unresolved and errored security discussions to synthesis |
 | `--output-dir` | Run directory. Default: `runs/<owner>__<name>/<utc-stamp>` |
 | `--max-iterations` | Classifier–evaluator rounds per pull request |

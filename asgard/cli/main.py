@@ -14,11 +14,12 @@ from asgard.core.stages.classify import ClassifyStage
 from asgard.core.stages.consolidate import ConsolidateStage
 from asgard.core.stages.mine import MineStage
 from asgard.core.stages.normalize import NormalizeStage
+from asgard.core.stages.security_md import SecurityMdStage
 from asgard.core.stages.synthesize import SynthesizeStage
 from asgard.providers.factory import LLMFactory
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
-_PIPELINE = ("mine", "normalize", "classify", "consolidate", "synthesize")
+_PIPELINE = ("mine", "normalize", "classify", "consolidate", "synthesize", "security_md")
 
 
 def main(
@@ -63,6 +64,7 @@ def _run_pipeline(
         ClassifyStage(config.max_iterations, factory),
         ConsolidateStage(config.include_unresolved),
         SynthesizeStage(config.repo, factory),
+        SecurityMdStage(config.repo, config.llm, path=config.security_md),
     ]
     Orchestrator(stages, sinks).run(
         config.output_dir,
@@ -83,7 +85,7 @@ def _parser() -> argparse.ArgumentParser:
         "run",
         help=(
             "validate settings, save them, mine pull requests, normalize them, "
-            "classify them, consolidate them, and synthesize the guideline"
+            "classify them, consolidate them, synthesize the guideline, and write SECURITY.md"
         ),
     )
     run.add_argument("repo", nargs="?")
@@ -95,6 +97,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--config", type=Path)
     run.add_argument("--output-dir")
+    run.add_argument("--security-md", type=Path)
     run.add_argument("--max-iterations", type=int)
     run.add_argument("--prefilter", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--include-unresolved", action=argparse.BooleanOptionalAction, default=None)
@@ -118,6 +121,8 @@ def _overrides(args: argparse.Namespace) -> dict:
         data["repo"] = args.repo
     if args.output_dir:
         data["output_dir"] = args.output_dir
+    if args.security_md is not None:
+        data["security_md"] = args.security_md
     if args.max_iterations is not None:
         data["max_iterations"] = args.max_iterations
     if args.prefilter is not None:

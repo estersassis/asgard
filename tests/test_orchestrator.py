@@ -11,6 +11,7 @@ import pytest
 from rich.console import Console
 
 from asgard.core.events import (
+    CitationWarning,
     ClassificationAttempt,
     Error,
     EvaluatorVerdict,
@@ -144,6 +145,7 @@ def test_events_are_json() -> None:
         EvaluatorVerdict(pr_id="3", approved=False),
         LoopFinished(pr_id="3"),
         SynthesisChunk(text="hello"),
+        CitationWarning(pr_id="9", message="citation #9 is not in the approved security set"),
         RateLimited(wait_seconds=15),
         Error(message="boom", stage="classify"),
     ]
@@ -181,6 +183,14 @@ def test_sinks_receive_events(tmp_path: Path, caplog: pytest.LogCaptureFixture) 
     with CLIProgressSink(console) as sink:
         sink.handle(RateLimited(wait_seconds=15))
     assert "waiting 15s" in stream.getvalue()
+
+    stream = StringIO()
+    console = Console(file=stream, force_terminal=True, width=80)
+    with CLIProgressSink(console) as sink:
+        sink.handle(
+            CitationWarning(pr_id="9", message="citation #9 is not in the approved security set")
+        )
+    assert "citation #9 is not in the approved security set" in stream.getvalue()
 
 
 def test_run_does_not_write_stdout(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
