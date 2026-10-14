@@ -87,6 +87,7 @@ def test_flag_overrides_file_and_omitted_flag_stays(
     assert config.max_iterations == 9
     assert config.filters.state == "open"
     assert config.prefilter is True
+    assert config.include_unresolved is False
     assert config.filters.merged_only is True
     assert config.llm.default.model == "llama3.1"
     from_url, _ = load_run(config_path, {"repo": "https://github.com/jpadilla/pyjwt.git"})
@@ -154,6 +155,7 @@ def test_cli_run_config_matches_saved_file(tmp_path: Path, monkeypatch: pytest.M
             str(out),
             "--max-iterations",
             "4",
+            "--include-unresolved",
         ]
     )
     saved = json.loads((out / "config.json").read_text(encoding="utf-8"))
@@ -161,6 +163,7 @@ def test_cli_run_config_matches_saved_file(tmp_path: Path, monkeypatch: pytest.M
     assert saved["max_iterations"] == 4
     assert saved["filters"]["state"] == "closed"
     assert saved["prefilter"] is True
+    assert saved["include_unresolved"] is True
     assert TOKEN not in json.dumps(saved)
 
     main(["run", "--config", str(out / "config.json")])

@@ -21,7 +21,7 @@ class ConsolidateStage(Stage):
         classified = _classified(data)
         normalized = _normalized(ctx)
         lines = _trace_lines(ctx)
-        _check_mine(ctx, [item["pr_id"] for item in classified])
+        numbers = _pull_numbers(ctx, [item["pr_id"] for item in classified])
 
         synthesis: list[dict[str, Any]] = []
         audit: list[dict[str, Any]] = []
@@ -29,12 +29,13 @@ class ConsolidateStage(Stage):
         non_security = 0
         unresolved = 0
         for item in classified:
-            pr_id = item["pr_id"]
+            stored_id = item["pr_id"]
+            pr_id = numbers[stored_id]
             status = item["status"]
             decision = item["decision"]
-            source = normalized.get(pr_id)
+            source = normalized.get(stored_id)
             if source is None:
-                raise ConfigError(f"normalized pull {pr_id} is missing")
+                raise ConfigError(f"normalized pull {stored_id} is missing")
             bucket = _bucket(status, decision)
             if bucket == "security":
                 security += 1
@@ -49,7 +50,7 @@ class ConsolidateStage(Stage):
                     "status": status,
                     "iterations": item["iterations"],
                     "trace": _TRACE,
-                    "trace_lines": lines.get(pr_id, []),
+                    "trace_lines": lines.get(stored_id, []),
                 }
             )
             if _for_synthesis(status, decision, self.include_unresolved):
@@ -173,18 +174,50 @@ def _trace_lines(ctx: RunContext) -> dict[str, list[int]]:
     return lines
 
 
-def _check_mine(ctx: RunContext, pr_ids: list[str]) -> None:
+def _pull_numbers(ctx: RunContext, pr_ids: list[str]) -> dict[str, str]:
+    """Map each classified id to the pull number.
+
+    A finished run may have stored the GraphQL node id. The mine cache still
+    has that id next to the number, so consolidation does not rerun earlier stages.
+    """
     path = ctx.run_dir / "mine" / "output.json"
     if not path.is_file():
-        return
+        return {pr_id: pr_id for pr_id in pr_ids}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         raise ConfigError("mined pull requests were not a list of numbers") from None
     if not isinstance(data, list) or any(not _number(item) for item in data):
         raise ConfigError("mined pull requests were not a list of numbers")
-    if {str(number) for number in data} != set(pr_ids):
+    by_key = {str(number): str(number) for number in data}
+    for number in data:
+        node_id = _node_id(ctx.run_dir / "mine" / "prs" / f"{number}.json")
+        if node_id:
+            by_key[node_id] = str(number)
+    resolved: dict[str, str] = {}
+    for pr_id in pr_ids:
+        number = by_key.get(pr_id)
+        if number is None:
+            raise ConfigError("classified pull requests do not match the mined set")
+        resolved[pr_id] = number
+    if set(resolved.values()) != set(by_key.values()):
         raise ConfigError("classified pull requests do not match the mined set")
+    return resolved
+
+
+def _node_id(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise ConfigError("mined pull requests were not a list of numbers") from None
+    if not isinstance(payload, dict):
+        return None
+    node_id = payload.get("node_id")
+    if isinstance(node_id, str) and node_id:
+        return node_id
+    return None
 
 
 def _number(value: Any) -> bool:

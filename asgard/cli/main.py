@@ -11,12 +11,13 @@ from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.sinks import CLIProgressSink, JSONLSink, LoggingSink
 from asgard.core.stages.classify import ClassifyStage
+from asgard.core.stages.consolidate import ConsolidateStage
 from asgard.core.stages.mine import MineStage
 from asgard.core.stages.normalize import NormalizeStage
 from asgard.providers.factory import LLMFactory
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
-_PIPELINE = ("mine", "normalize", "classify")
+_PIPELINE = ("mine", "normalize", "classify", "consolidate")
 
 
 def main(
@@ -59,6 +60,7 @@ def _run_pipeline(
         MineStage(opener=opener),
         NormalizeStage(repo=config.repo),
         ClassifyStage(config.max_iterations, factory),
+        ConsolidateStage(config.include_unresolved),
     ]
     Orchestrator(stages, sinks).run(
         config.output_dir,
@@ -77,7 +79,10 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser(
         "run",
-        help="validate settings, save them, mine pull requests, normalize them, and classify them",
+        help=(
+            "validate settings, save them, mine pull requests, normalize them, "
+            "classify them, and consolidate them"
+        ),
     )
     run.add_argument("repo", nargs="?")
     run.add_argument(
@@ -90,6 +95,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir")
     run.add_argument("--max-iterations", type=int)
     run.add_argument("--prefilter", action=argparse.BooleanOptionalAction, default=None)
+    run.add_argument("--include-unresolved", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--state", choices=("open", "closed", "all"))
     run.add_argument("--merged-only", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--since")
@@ -114,6 +120,8 @@ def _overrides(args: argparse.Namespace) -> dict:
         data["max_iterations"] = args.max_iterations
     if args.prefilter is not None:
         data["prefilter"] = args.prefilter
+    if args.include_unresolved is not None:
+        data["include_unresolved"] = args.include_unresolved
     filters: dict = {}
     if args.state:
         filters["state"] = args.state

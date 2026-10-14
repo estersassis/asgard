@@ -25,6 +25,8 @@ class NormalizeStage(Stage):
             if not isinstance(payload, dict):
                 raise ConfigError(f"mined pull {number} was not an object")
             formatted = format_pull(payload, repo=self.repo)
+            # The audit and the synthesis link key off the pull number.
+            formatted["context"]["pr_id"] = str(number)
             return NormalizedPullRequest.model_validate(formatted).model_dump()
 
         return self.process_items(ctx, [(str(number), number) for number in numbers], work)

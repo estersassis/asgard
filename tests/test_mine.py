@@ -247,8 +247,7 @@ def test_run_mines_after_saving_config(
     cached = json.loads((out / "mine" / "prs" / "4.json").read_text(encoding="utf-8"))
     assert cached["body"] == "change"
     events = [
-        json.loads(line)
-        for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert [event["type"] for event in events] == [
         "StageStarted",
@@ -261,6 +260,8 @@ def test_run_mines_after_saving_config(
         "EvaluatorVerdict",
         "LoopFinished",
         "StageFinished",
+        "StageStarted",
+        "StageFinished",
     ]
     assert events[0]["stage"] == "mine"
     assert events[1]["pr_id"] == "4"
@@ -268,9 +269,12 @@ def test_run_mines_after_saving_config(
     assert events[4] == {"type": "StageFinished", "stage": "normalize", "skipped": False}
     assert events[5]["stage"] == "classify"
     assert events[9] == {"type": "StageFinished", "stage": "classify", "skipped": False}
+    assert events[10]["stage"] == "consolidate"
+    assert events[11] == {"type": "StageFinished", "stage": "consolidate", "skipped": False}
     normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
     assert normalized[0]["description"] == "change"
     assert normalized[0]["context"]["repository"] == "jpadilla/pyjwt"
+    assert normalized[0]["context"]["pr_id"] == "4"
     captured = capsys.readouterr()
     assert captured.out == ""
     assert TOKEN not in captured.err
@@ -285,14 +289,25 @@ def test_run_mines_after_saving_config(
     assert len(seen) == calls + 1
     assert not seen[-1].endswith("/pulls/4")
     finished = [
-        json.loads(line)
-        for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    ][-3:]
+        json.loads(line) for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ][-4:]
     assert finished == [
         {"type": "StageFinished", "stage": "mine", "skipped": True},
         {"type": "StageFinished", "stage": "normalize", "skipped": True},
         {"type": "StageFinished", "stage": "classify", "skipped": True},
+        {"type": "StageFinished", "stage": "consolidate", "skipped": True},
     ]
+
+    calls = len(seen)
+    main(
+        ["run", "--config", str(out / "config.json"), "--from", "consolidate"],
+        opener=opener,
+        handlers={"fake": _approved_handler()},
+    )
+    assert len(seen) == calls + 1
+    assert not seen[-1].endswith("/pulls/4")
+    resumed = json.loads((out / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert resumed == {"type": "StageFinished", "stage": "consolidate", "skipped": True}
 
 
 def test_run_from_normalize_uses_the_saved_mine(
