@@ -41,7 +41,7 @@ Keep the first run small. With Ollama serving `llama3.1`:
 asgard run owner/name --max-prs 10 --provider ollama --model llama3.1
 ```
 
-`owner/name` may also be a `github.com` URL. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, and classifies. Results land in `runs/owner__name/<utc-stamp>/`.
+`owner/name` may also be a `github.com` URL. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, classifies, and consolidates. Results land in `runs/owner__name/<utc-stamp>/`.
 
 To continue a finished prefix of that run:
 
@@ -49,7 +49,15 @@ To continue a finished prefix of that run:
 asgard run --config runs/owner__name/<utc-stamp>/config.json --from classify
 ```
 
-`--from` accepts `mine`, `normalize`, or `classify`. Every earlier stage must already have written its output.
+`--from` accepts `mine`, `normalize`, `classify`, or `consolidate`. Every earlier stage must already have written its output.
+
+Consolidation does not call a model. It joins the classify summary, the normalized pull requests, and `classify/trace.jsonl`, then writes three files:
+
+- `consolidate/output.json` is the list synthesis will read. By default each item is an approved pull request whose final classification has a security discussion: `pr_id`, `title`, `link` (`https://github.com/{repository}/pull/{pr_id}`), `evidence` (`quote` and `location`), and `rationale`.
+- `consolidate/audit.jsonl` has one line per pull request, in classify order: `pr_id`, `decision`, `status`, `iterations`, `trace` (`classify/trace.jsonl`), and `trace_lines`.
+- `consolidate/summary.json` has `total`, `security`, `non_security`, and `unresolved`. Those three counts add up to `total`.
+
+`--include-unresolved` also sends unresolved and errored pull requests into that list when their final classification still has a security discussion. An error with no valid classification stays out. Approved pull requests without a security discussion stay out either way.
 
 ## Configuration
 
@@ -80,7 +88,8 @@ The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, 
 | --- | --- |
 | `repo` | `owner/name` or a github.com URL |
 | `--config` | TOML or JSON settings file |
-| `--from` | Resume at `mine`, `normalize`, or `classify` |
+| `--from` | Resume at `mine`, `normalize`, `classify`, or `consolidate` |
+| `--include-unresolved` | Also send unresolved and errored security discussions to synthesis |
 | `--output-dir` | Run directory. Default: `runs/<owner>__<name>/<utc-stamp>` |
 | `--max-iterations` | Classifier–evaluator rounds per pull request |
 | `--state` | `open`, `closed`, or `all` |

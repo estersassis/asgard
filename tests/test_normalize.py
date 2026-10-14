@@ -312,7 +312,9 @@ def test_normalize_stage_writes_output_and_events(
     assert sink.events[1] == StageFinished(stage="normalize")
     saved = json.loads((tmp_path / "normalize" / "output.json").read_text(encoding="utf-8"))
     assert saved == result
-    assert result[0] == real(_rest_3135(), repo="django/django")
+    expected = real(_rest_3135(), repo="django/django")
+    expected["context"]["pr_id"] = "3135"
+    assert result[0] == expected
     assert result[1]["context"]["state"] == "MERGED"
     assert result[1]["description"] == "body 2046"
     assert result[2]["general_discussion"] == ["note 9"]
@@ -365,8 +367,8 @@ def test_normalize_stage_does_not_reformat_saved_ids(
     result = Orchestrator([NormalizeStage()], [sink]).run(tmp_path, data=numbers)
     assert calls == ["node-40", "node-41"]
     assert [type(event) for event in sink.events] == [StageStarted, StageFinished]
-    assert result[0]["context"]["pr_id"] == NODE_ID
-    assert result[1]["context"]["pr_id"] == "node-40"
+    assert result[0]["context"]["pr_id"] == "3135"
+    assert result[1]["context"]["pr_id"] == "40"
     assert result[2]["context"]["state"] == "MERGED"
     saved = json.loads((tmp_path / "normalize" / "output.json").read_text(encoding="utf-8"))
     assert saved == result

@@ -57,6 +57,7 @@ class RunConfig(BaseModel):
     filters: Filters = Field(default_factory=Filters)
     max_iterations: int = 3
     prefilter: bool = False
+    include_unresolved: bool = False
     output_dir: Path
 
     @field_validator("repo")
