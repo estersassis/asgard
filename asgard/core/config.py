@@ -59,6 +59,7 @@ class RunConfig(BaseModel):
     prefilter: bool = False
     include_unresolved: bool = False
     output_dir: Path
+    security_md: Path | None = None
 
     @field_validator("repo")
     @classmethod
