@@ -15,6 +15,7 @@ from rich.progress import (
 )
 
 from asgard.core.events import (
+    CitationWarning,
     ClassificationAttempt,
     Error,
     EvaluatorVerdict,
@@ -85,6 +86,8 @@ class CLIProgressSink:
         elif isinstance(event, StageFinished):
             self._complete()
         elif isinstance(event, Error):
+            self.progress.console.print(event.message)
+        elif isinstance(event, CitationWarning):
             self.progress.console.print(event.message)
         elif isinstance(event, RateLimited):
             self.progress.console.print(f"waiting {event.wait_seconds:g}s")

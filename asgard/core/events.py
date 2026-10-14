@@ -58,6 +58,12 @@ class SynthesisChunk(Event):
     text: str
 
 
+class CitationWarning(Event):
+    type: Literal["CitationWarning"] = "CitationWarning"
+    pr_id: str
+    message: str
+
+
 class Error(Event):
     type: Literal["Error"] = "Error"
     message: str
