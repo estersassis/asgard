@@ -1,12 +1,39 @@
 """Gemini handler. The caller supplies messages; this module only calls the API."""
 
 import time
+from typing import Any
 
 from google import genai
 from google.genai import types
 
 from asgard.providers.errors import ProviderError
 from asgard.providers.models import LLMResponse, Message, response_schema
+
+# Subset accepted by response_json_schema. additionalProperties stays here;
+# the OpenAPI response_schema field rejects it.
+_SCHEMA_KEYS = {
+    "$anchor",
+    "$defs",
+    "$id",
+    "$ref",
+    "additionalProperties",
+    "anyOf",
+    "description",
+    "enum",
+    "format",
+    "items",
+    "maxItems",
+    "maximum",
+    "minItems",
+    "minimum",
+    "oneOf",
+    "prefixItems",
+    "properties",
+    "propertyOrdering",
+    "required",
+    "title",
+    "type",
+}
 
 
 class GeminiHandler:
@@ -39,7 +66,7 @@ class GeminiHandler:
             config["system_instruction"] = system
         if schema is not None:
             config["response_mime_type"] = "application/json"
-            config["response_schema"] = response_schema(schema)
+            config["response_json_schema"] = _gemini_schema(response_schema(schema))
         started = time.perf_counter()
         try:
             response = self._client.models.generate_content(
@@ -57,3 +84,21 @@ class GeminiHandler:
             latency_s=time.perf_counter() - started,
             model=self.model,
         )
+
+
+def _gemini_schema(schema: Any) -> Any:
+    if isinstance(schema, list):
+        return [_gemini_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    cleaned: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key not in _SCHEMA_KEYS:
+            continue
+        if key in {"properties", "$defs"} and isinstance(value, dict):
+            cleaned[key] = {name: _gemini_schema(child) for name, child in value.items()}
+        elif key in {"items", "additionalProperties", "anyOf", "oneOf", "prefixItems"}:
+            cleaned[key] = _gemini_schema(value)
+        else:
+            cleaned[key] = value
+    return cleaned

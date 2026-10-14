@@ -1,6 +1,7 @@
 """Provider factory, role settings, and retries. No network."""
 
 import ast
+import json
 import logging
 from pathlib import Path
 
@@ -196,6 +197,38 @@ def test_load_settings_lets_env_override_file_keys(
     assert credentials.key_for("openai") == secret
     assert secret not in repr(credentials)
     assert "file-secret-value" not in repr(credentials)
+
+
+def test_gemini_json_schema_drops_keywords_the_api_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asgard.core.classification import Classification as PullClassification
+    from asgard.providers.handlers.gemini import GeminiHandler
+
+    captured: dict[str, object] = {}
+
+    class _Models:
+        def generate_content(self, **kwargs: object) -> object:
+            captured.update(kwargs)
+            return type("Response", (), {"text": "{}", "usage_metadata": None})()
+
+    class _Client:
+        def __init__(self, api_key: str) -> None:
+            self.models = _Models()
+
+    monkeypatch.setattr("asgard.providers.handlers.gemini.genai.Client", _Client)
+    GeminiHandler("gemini-2.5-flash", "key").generate(
+        [Message(role="user", content="classify")],
+        schema=PullClassification,
+    )
+    config = captured["config"]
+    assert config.response_schema is None
+    schema = config.response_json_schema
+    assert schema["additionalProperties"] is False
+    encoded = json.dumps(schema)
+    assert "minLength" not in encoded
+    assert "additional_properties" not in encoded
+    assert schema["properties"]["evidence"]["items"]["$ref"] == "#/$defs/Evidence"
 
 
 def test_providers_do_not_import_core_or_interfaces() -> None:
