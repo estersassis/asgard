@@ -9,9 +9,26 @@ ASGARD (**A**utomated **S**ecurity **G**uideline **A**gent from **R**epository *
 
 The tool generalizes the manual pipeline from *Automatically Generating Security Guidelines from Pull Request Discussions: The Case of Django Framework* (VEM 2026) into a reproducible system for the SANER 2027 Tool Demo Track. That study showed pull request discussions carry enough evidence to produce useful security guidelines. The original run was specific to Django, processed 18,524 pull requests by hand, and finished by pasting JSON into claude.ai.
 
+## Pipeline
+
+```mermaid
+flowchart LR
+  mine --> normalize --> classify --> consolidate --> synthesize --> security_md --> bundle
+```
+
+| Stage | What it writes |
+| --- | --- |
+| `mine` | One JSON file per pull request |
+| `normalize` | One record per pull request, ready for the models |
+| `classify` | A classifier–evaluator decision for each pull request |
+| `consolidate` | The approved security discussions |
+| `synthesize` | The user guideline |
+| `security_md` | `SECURITY.md` |
+| `bundle` | `manifest.json` |
+
 ## Install
 
-Python 3.11 or newer.
+Python 3.11 or newer. The commands below assume this virtual environment is active.
 
 ```bash
 python -m venv .venv
@@ -19,9 +36,17 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+The spreadsheet export needs openpyxl. Install it with the export extra when you want `asgard export` or `--export-xlsx`:
+
+```bash
+pip install -e ".[export]"
+```
+
 ## Credentials
 
 Copy `.env.example` to `.env`. ASGARD reads that file on startup and never writes secrets into the saved run configuration.
+
+Create a classic personal access token at [github.com/settings/tokens](https://github.com/settings/tokens). A public repository needs the `public_repo` scope. A private repository needs `repo`. Put that token in `GITHUB_TOKEN`.
 
 | Variable | Used for |
 | --- | --- |
@@ -33,6 +58,12 @@ Copy `.env.example` to `.env`. ASGARD reads that file on startup and never write
 
 Ollama is the free path: it needs a running daemon and a pulled model, and no API key. Gemini, OpenAI, and Anthropic each need their own key. A role can use a different provider from the default.
 
+For the free path, install [Ollama](https://ollama.com), pull a model, and leave the daemon running:
+
+```bash
+ollama pull llama3.1
+```
+
 ## Quickstart
 
 Keep the first run small. With Ollama serving `llama3.1`:
@@ -41,7 +72,13 @@ Keep the first run small. With Ollama serving `llama3.1`:
 asgard run owner/name --max-prs 10 --provider ollama --model llama3.1
 ```
 
-`owner/name` may also be a `github.com` URL. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, classifies, consolidates, synthesizes the guideline, writes `SECURITY.md`, and writes a run manifest. Results land in `runs/owner__name/<utc-stamp>/`.
+`owner/name` may also be a `github.com` URL. The same command works with `--provider gemini`, `--provider openai`, or `--provider anthropic` once that provider's key is in `.env`. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, classifies, consolidates, synthesizes the guideline, writes `SECURITY.md`, and writes a run manifest. Results land in `runs/owner__name/<utc-stamp>/`. Open `runs/owner__name/<utc-stamp>/SECURITY.md`.
+
+The same settings can live in `asgard.toml`. Flags override the file.
+
+```bash
+asgard run --config asgard.toml
+```
 
 To continue a finished prefix of that run:
 
@@ -55,38 +92,35 @@ Progress goes to stderr. `--quiet` hides it. `--json-logs` writes one JSON event
 
 `asgard export <run-dir>` writes `bundle/classifications.xlsx` from `classify/output.json`. It does not call a model and it does not rewrite the manifest.
 
-Consolidation does not call a model. It joins the classify summary, the normalized pull requests, and `classify/trace.jsonl`, then writes three files:
-
-- `consolidate/output.json` is the list synthesis will read. By default each item is an approved pull request whose final classification has a security discussion: `pr_id`, `title`, `link` (`https://github.com/{repository}/pull/{pr_id}`), `evidence` (`quote` and `location`), and `rationale`.
-- `consolidate/audit.jsonl` has one line per pull request, in classify order: `pr_id`, `decision`, `status`, `iterations`, `trace` (`classify/trace.jsonl`), and `trace_lines`.
-- `consolidate/summary.json` has `total`, `security`, `non_security`, and `unresolved`. Those three counts add up to `total`.
-
-`--include-unresolved` also sends unresolved and errored pull requests into that list when their final classification still has a security discussion. An error with no valid classification stays out. Approved pull requests without a security discussion stay out either way.
-
-Synthesis reads `consolidate/output.json` and writes the User Guideline to `synthesize/output.json`. One model call receives the whole list. Each recommendation cites pull requests from that list as `#123`. When the list is empty, the stage skips the model and writes a sentence: there was no security discussion, so there is no guideline.
-
-The next stage writes `<run>/SECURITY.md`. Each citation written as `(#123)` or `(#123, #456)` becomes a link to `https://github.com/<owner>/<repo>/pull/123`. A hash that is part of the prose, such as PKCS #1, stays text. A footer records the ASGARD version, the UTC date, the repository, the model used for each role, how many pull requests were analysed, and how many security pull requests were used. A citation outside that approved set stays linked and is reported: one `CitationWarning` event, and the id in `security_md/output.json` under `unknown_citations`. `--security-md` writes the file somewhere else.
-
-The last stage writes `<run>/manifest.json`, and the same document to `bundle/output.json`. It records the ASGARD version, the git commit when the checkout has one, the saved configuration with secrets removed, the SHA-256 of each role's system prompt, and the model for each role. It also records how many pull requests were mined, filtered, security, non-security, and unresolved; the item count and duration of each stage; token totals from `classify/trace.jsonl`; the loop metrics; and the citation warnings. `cost` is null. `files` maps every path in the run directory to a one-line description. Durations come from the `at` timestamp on each progress event. `--export-xlsx` also writes `bundle/classifications.xlsx` for a manual audit of the classifications. That file is off unless the flag is set.
-
 ## Configuration
 
-Settings can live in a TOML or JSON file passed with `--config`. Flags override the file. Omitted settings keep the file value.
+Settings can live in a TOML or JSON file passed with `--config`. Flags override the file. Omitted settings keep the file value. Save this as `asgard.toml` for a small run:
 
 ```toml
 repo = "owner/name"
 max_iterations = 3
+include_unresolved = false
+export_xlsx = false
 
 [filters]
 state = "all"
 since = "2024-01-01"
+until = "2024-12-31"
 max_prs = 10
 
 [llm.default]
 provider = "ollama"
 model = "llama3.1"
+temperature = 0
+timeout = 300
+
+[llm.classifier]
+model = "llama3.1"
 
 [llm.evaluator]
+model = "llama3.1"
+
+[llm.synthesizer]
 model = "llama3.1"
 ```
 
@@ -115,7 +149,88 @@ The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, 
 | `--evaluator-provider`, `--evaluator-model` | Evaluator override |
 | `--synthesizer-provider`, `--synthesizer-model` | Synthesizer override |
 
-`--prefilter`, `--merged-only`, and `--label` are stored on the run configuration for stages that are still ahead.
+`--prefilter`, `--merged-only`, and `--label` are stored on the run configuration for stages that are still ahead. Repeat `--label` to record several labels.
+
+## Run directory
+
+A run is one directory. The default path is `runs/<owner>__<name>/<utc-stamp>/`.
+
+```text
+runs/owner__name/20260101T120000Z/
+  config.json
+  events.jsonl
+  SECURITY.md
+  manifest.json
+  mine/
+    output.json
+    prs/123.json
+  normalize/
+    output.json
+    items.jsonl
+  classify/
+    output.json
+    items.jsonl
+    trace.jsonl
+    metrics.json
+  consolidate/
+    output.json
+    audit.jsonl
+    summary.json
+  synthesize/
+    output.json
+  security_md/
+    output.json
+  bundle/
+    output.json
+    classifications.xlsx
+```
+
+`config.json` is the saved settings with secrets removed. `events.jsonl` is one progress event per line. `classifications.xlsx` appears only when `--export-xlsx` is set or when you run `asgard export` on this directory.
+
+Consolidation does not call a model. It joins the classify summary, the normalized pull requests, and `classify/trace.jsonl`, then writes three files:
+
+- `consolidate/output.json` is the list synthesis will read. By default each item is an approved pull request whose final classification has a security discussion: `pr_id`, `title`, `link` (`https://github.com/{repository}/pull/{pr_id}`), `evidence` (`quote` and `location`), and `rationale`.
+- `consolidate/audit.jsonl` has one line per pull request, in classify order: `pr_id`, `decision`, `status`, `iterations`, `trace` (`classify/trace.jsonl`), and `trace_lines`.
+- `consolidate/summary.json` has `total`, `security`, `non_security`, and `unresolved`. Those three counts add up to `total`.
+
+`--include-unresolved` also sends unresolved and errored pull requests into that list when their final classification still has a security discussion. An error with no valid classification stays out. Approved pull requests without a security discussion stay out either way.
+
+Synthesis reads `consolidate/output.json` and writes the User Guideline to `synthesize/output.json`. One model call receives the whole list. Each recommendation cites pull requests from that list as `#123`. When the list is empty, the stage skips the model and writes a sentence: there was no security discussion, so there is no guideline.
+
+The next stage writes `<run>/SECURITY.md`. Each citation written as `(#123)` or `(#123, #456)` becomes a link to `https://github.com/<owner>/<repo>/pull/123`. A hash that is part of the prose, such as PKCS #1, stays text. A footer records the ASGARD version, the UTC date, the repository, the model used for each role, how many pull requests were analysed, and how many security pull requests were used. A citation outside that approved set stays linked and is reported: one `CitationWarning` event, and the id in `security_md/output.json` under `unknown_citations`. `--security-md` writes the file somewhere else.
+
+## manifest.json
+
+The last stage writes `<run>/manifest.json`, and the same document to `bundle/output.json`.
+
+| Field | Contents |
+| --- | --- |
+| `version` | ASGARD package version |
+| `commit` | Git commit of this checkout, or null |
+| `config` | Saved settings with secrets removed |
+| `prompts` | SHA-256 of each role's system prompt. The synthesizer hash is taken after `{repository}` is filled in |
+| `models` | `provider` and `model` for `classifier`, `evaluator`, and `synthesizer` |
+| `counts` | `mined`, `filtered`, `security`, `non_security`, and `unresolved` |
+| `stages` | For each stage: `items`, `duration_s`, and `skipped` |
+| `tokens` | `input` and `output` totals from `classify/trace.jsonl` |
+| `cost` | Always null |
+| `loop` | The contents of `classify/metrics.json`: `approval_rate_iteration_1`, `approval_rate_final`, `mean_iterations`, and `decision_flips` |
+| `citation_warnings` | Pull request ids cited outside the approved set |
+| `files` | Every path in the run directory, mapped to a one-line description |
+
+Durations come from the `at` timestamp on each progress event.
+
+## Synthesis prompt
+
+The synthesis instructions are `SYSTEM_PROMPT` in [`asgard/prompts/synthesizer.py`](asgard/prompts/synthesizer.py). `{repository}` is replaced with `owner/name` before the call. The user message is the JSON in `consolidate/output.json` and is not part of that prompt.
+
+Edit `SYSTEM_PROMPT` to change the guideline. Keep the response shape the stage reads: a `topics` list, each topic with `title` and `recommendations`, and each recommendation with `title`, `text`, and a non-empty `pr_ids` list. Every `pr_id` has to be one of the ids in the consolidated list. Then rerun synthesis and the stages after it:
+
+```bash
+asgard run --config runs/owner__name/<utc-stamp>/config.json --from synthesize
+```
+
+The new `manifest.json` records the SHA-256 of the edited prompt under `prompts.synthesizer`. The classifier and evaluator prompts are the constants in `asgard/prompts/classifier.py` and `asgard/prompts/evaluator.py`.
 
 ## Development
 
