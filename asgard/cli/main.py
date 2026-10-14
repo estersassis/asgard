@@ -14,10 +14,11 @@ from asgard.core.stages.classify import ClassifyStage
 from asgard.core.stages.consolidate import ConsolidateStage
 from asgard.core.stages.mine import MineStage
 from asgard.core.stages.normalize import NormalizeStage
+from asgard.core.stages.synthesize import SynthesizeStage
 from asgard.providers.factory import LLMFactory
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
-_PIPELINE = ("mine", "normalize", "classify", "consolidate")
+_PIPELINE = ("mine", "normalize", "classify", "consolidate", "synthesize")
 
 
 def main(
@@ -61,6 +62,7 @@ def _run_pipeline(
         NormalizeStage(repo=config.repo),
         ClassifyStage(config.max_iterations, factory),
         ConsolidateStage(config.include_unresolved),
+        SynthesizeStage(config.repo, factory),
     ]
     Orchestrator(stages, sinks).run(
         config.output_dir,
@@ -81,7 +83,7 @@ def _parser() -> argparse.ArgumentParser:
         "run",
         help=(
             "validate settings, save them, mine pull requests, normalize them, "
-            "classify them, and consolidate them"
+            "classify them, consolidate them, and synthesize the guideline"
         ),
     )
     run.add_argument("repo", nargs="?")
