@@ -58,6 +58,7 @@ class RunConfig(BaseModel):
     max_iterations: int = 3
     prefilter: bool = False
     include_unresolved: bool = False
+    export_xlsx: bool = False
     output_dir: Path
     security_md: Path | None = None
 

@@ -1,6 +1,8 @@
 """Event sinks. A new interface is a new sink, not a change to the stages."""
 
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -50,8 +52,10 @@ class JSONLSink:
 
     def handle(self, event: Event) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.loads(event.model_dump_json())
+        payload["at"] = datetime.now(timezone.utc).isoformat()
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(event.model_dump_json() + "\n")
+            handle.write(json.dumps(payload) + "\n")
 
 
 class LoggingSink:

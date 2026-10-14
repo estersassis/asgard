@@ -27,6 +27,15 @@ from asgard.providers.models import LLMSettings, RoleSpec
 TOKEN = "ghp_secret"
 
 
+def _events(path: Path) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        event.pop("at", None)
+        events.append(event)
+    return events
+
+
 class _Response:
     def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
         self._body = body
@@ -246,9 +255,7 @@ def test_run_mines_after_saving_config(
     assert json.loads((out / "mine" / "output.json").read_text(encoding="utf-8")) == [4]
     cached = json.loads((out / "mine" / "prs" / "4.json").read_text(encoding="utf-8"))
     assert cached["body"] == "change"
-    events = [
-        json.loads(line) for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
+    events = _events(out / "events.jsonl")
     assert [event["type"] for event in events] == [
         "StageStarted",
         "PRMined",
@@ -259,6 +266,8 @@ def test_run_mines_after_saving_config(
         "ClassificationAttempt",
         "EvaluatorVerdict",
         "LoopFinished",
+        "StageFinished",
+        "StageStarted",
         "StageFinished",
         "StageStarted",
         "StageFinished",
@@ -279,6 +288,8 @@ def test_run_mines_after_saving_config(
     assert events[13] == {"type": "StageFinished", "stage": "synthesize", "skipped": False}
     assert events[14]["stage"] == "security_md"
     assert events[15] == {"type": "StageFinished", "stage": "security_md", "skipped": False}
+    assert events[16]["stage"] == "bundle"
+    assert events[17] == {"type": "StageFinished", "stage": "bundle", "skipped": False}
     assert not any(event["type"] == "SynthesisChunk" for event in events)
     assert not any(event["type"] == "CitationWarning" for event in events)
     guideline = json.loads((out / "synthesize" / "output.json").read_text(encoding="utf-8"))
@@ -298,6 +309,16 @@ def test_run_mines_after_saving_config(
     assert captured.out == ""
     assert TOKEN not in captured.err
     assert TOKEN not in (out / "events.jsonl").read_text(encoding="utf-8")
+    manifest_text = (out / "manifest.json").read_text(encoding="utf-8")
+    assert TOKEN not in manifest_text
+    recorded = json.loads(manifest_text)
+    on_disk = {
+        path.relative_to(out).as_posix()
+        for path in out.rglob("*")
+        if path.is_file()
+    }
+    assert on_disk == set(recorded["files"])
+    assert not (out / "bundle" / "classifications.xlsx").exists()
 
     calls = len(seen)
     main(
@@ -307,9 +328,7 @@ def test_run_mines_after_saving_config(
     )
     assert len(seen) == calls + 1
     assert not seen[-1].endswith("/pulls/4")
-    finished = [
-        json.loads(line) for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    ][-6:]
+    finished = _events(out / "events.jsonl")[-7:]
     assert finished == [
         {"type": "StageFinished", "stage": "mine", "skipped": True},
         {"type": "StageFinished", "stage": "normalize", "skipped": True},
@@ -317,6 +336,7 @@ def test_run_mines_after_saving_config(
         {"type": "StageFinished", "stage": "consolidate", "skipped": True},
         {"type": "StageFinished", "stage": "synthesize", "skipped": True},
         {"type": "StageFinished", "stage": "security_md", "skipped": True},
+        {"type": "StageFinished", "stage": "bundle", "skipped": True},
     ]
 
     calls = len(seen)
@@ -327,13 +347,12 @@ def test_run_mines_after_saving_config(
     )
     assert len(seen) == calls + 1
     assert not seen[-1].endswith("/pulls/4")
-    resumed = [
-        json.loads(line) for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    ][-3:]
+    resumed = _events(out / "events.jsonl")[-4:]
     assert resumed == [
         {"type": "StageFinished", "stage": "consolidate", "skipped": True},
         {"type": "StageFinished", "stage": "synthesize", "skipped": True},
         {"type": "StageFinished", "stage": "security_md", "skipped": True},
+        {"type": "StageFinished", "stage": "bundle", "skipped": True},
     ]
 
     calls = len(seen)
@@ -344,13 +363,11 @@ def test_run_mines_after_saving_config(
     )
     assert len(seen) == calls + 1
     assert not seen[-1].endswith("/pulls/4")
-    resumed_synthesis = [
-        json.loads(line)
-        for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()[-2:]
-    ]
+    resumed_synthesis = _events(out / "events.jsonl")[-3:]
     assert resumed_synthesis == [
         {"type": "StageFinished", "stage": "synthesize", "skipped": True},
         {"type": "StageFinished", "stage": "security_md", "skipped": True},
+        {"type": "StageFinished", "stage": "bundle", "skipped": True},
     ]
 
     calls = len(seen)
@@ -361,10 +378,21 @@ def test_run_mines_after_saving_config(
     )
     assert len(seen) == calls + 1
     assert not seen[-1].endswith("/pulls/4")
-    resumed_security = json.loads(
-        (out / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    resumed_security = _events(out / "events.jsonl")[-2:]
+    assert resumed_security == [
+        {"type": "StageFinished", "stage": "security_md", "skipped": True},
+        {"type": "StageFinished", "stage": "bundle", "skipped": True},
+    ]
+
+    calls = len(seen)
+    main(
+        ["run", "--config", str(out / "config.json"), "--from", "bundle"],
+        opener=opener,
+        handlers={"fake": _approved_handler()},
     )
-    assert resumed_security == {"type": "StageFinished", "stage": "security_md", "skipped": True}
+    assert len(seen) == calls + 1
+    resumed_bundle = _events(out / "events.jsonl")[-1]
+    assert resumed_bundle == {"type": "StageFinished", "stage": "bundle", "skipped": True}
 
 
 def test_run_from_normalize_uses_the_saved_mine(
