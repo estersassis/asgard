@@ -108,7 +108,7 @@ class CLIProgressSink:
         elif isinstance(event, Error):
             self.progress.console.print(event.message)
         elif isinstance(event, CitationWarning):
-            self.progress.console.print(event.message)
+            self.progress.console.print(event.message, highlight=False)
         elif isinstance(event, RateLimited):
             self.progress.console.print(f"waiting {event.wait_seconds:g}s")
         elif isinstance(event, _ITEM_EVENTS) and self._task is not None:

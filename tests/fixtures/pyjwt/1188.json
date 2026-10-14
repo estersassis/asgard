@@ -1,0 +1,16 @@
+{
+  "number": 1188,
+  "node_id": "PR_kwDOABV8os7t2PVN",
+  "title": "Reject a bare string for the decode() algorithms argument (#1117)",
+  "state": "open",
+  "merged": false,
+  "body": "Closes #1117.\n\n## Problem\n\nThe `algorithms` argument to `decode()` is documented and typed as `Sequence[str]`, but a bare string is silently accepted:\n\n```python\n>>> jwt.decode(token, key, algorithms=\"HS256\")   # \"works\"\n```\n\nIt \"works\" only by accident: the allow-list check is `alg not in algorithms`, and for a string that's a **substring** test rather than membership. So a token's `alg` only has to be a *substring* of the passed string to pass the allow-list, which is a footgun for a value that is a security-critical control (the allow-list is what prevents algorithm-confusion / `alg=none` attacks).\n\n```python\n>>> \"HS2\" in \"HS256\"     # True  -> substring, not membership\n```\n\n## Fix\n\nRaise a clear `TypeError` early in `decode_complete()` when `algorithms` is a `str`, telling the caller to pass a sequence. Proper sequences (`list`, `tuple`, `set`) are unaffected, and the \"no algorithms passed\" path is unchanged.\n\n```python\n>>> jwt.decode(token, key, algorithms=\"HS256\")\nTypeError: The \"algorithms\" argument must be a sequence of strings (e.g. [\"HS256\"]), ...\n>>> jwt.decode(token, key, algorithms=[\"HS256\"])   # still works\n```\n\n## Testing\n\n- Added `TestJWS::test_decode_rejects_str_algorithms` \u2014 a bare string raises `TypeError`; a list still decodes. It does *not* raise on `main` (`DID NOT RAISE`) and passes with this change.\n- Full suite: `366 passed, 4 skipped` (the skips are the pre-existing crypto-optional tests); no existing test relied on passing a bare string. `flake8` and `mypy` are clean on the changed source.\n- Added a `CHANGELOG.rst` entry under *Unreleased \u2192 Changed*.\n\n## Note\n\nThis is a small **breaking** change: code that currently passes a bare string will now raise instead of silently working. Given `algorithms` is a security control, I went with failing loud, but if you'd prefer a softer path (a `DeprecationWarning` now, coercing the string to a single-element list, and the hard error in pyjwt 3), I'm happy to adjust.\n\n---\n\n*Disclosure: this change was prepared with the assistance of an AI tool (Claude Code). I reproduced the issue, implemented and verified the fix and test, ran the suite and linters, and take responsibility for the contribution and will respond to review feedback personally.*\n",
+  "created_at": "2026-07-04T11:38:59Z",
+  "updated_at": "2026-09-09T15:42:14Z",
+  "html_url": "https://github.com/jpadilla/pyjwt/pull/1188",
+  "base": {
+    "repo": {
+      "full_name": "jpadilla/pyjwt"
+    }
+  }
+}
