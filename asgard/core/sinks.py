@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, TextIO
 
 from rich.console import Console
 from rich.progress import (
@@ -46,16 +46,32 @@ class Sink(Protocol):
         """Receive one progress event."""
 
 
+def event_record(event: Event) -> dict[str, Any]:
+    """JSON object for one event, including the UTC timestamp."""
+    payload = json.loads(event.model_dump_json())
+    payload["at"] = datetime.now(timezone.utc).isoformat()
+    return payload
+
+
 class JSONLSink:
     def __init__(self, path: Path) -> None:
         self.path = path
 
     def handle(self, event: Event) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.loads(event.model_dump_json())
-        payload["at"] = datetime.now(timezone.utc).isoformat()
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload) + "\n")
+            handle.write(json.dumps(event_record(event)) + "\n")
+
+
+class StreamJSONSink:
+    """One JSON event per line, flushed so a CI log can read it immediately."""
+
+    def __init__(self, stream: TextIO) -> None:
+        self.stream = stream
+
+    def handle(self, event: Event) -> None:
+        self.stream.write(json.dumps(event_record(event)) + "\n")
+        self.stream.flush()
 
 
 class LoggingSink:

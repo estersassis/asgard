@@ -9,8 +9,13 @@ from pydantic import ValidationError
 
 from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
-from asgard.core.sinks import CLIProgressSink, JSONLSink, LoggingSink
-from asgard.core.stages.bundle import BundleStage
+from asgard.core.sinks import (
+    CLIProgressSink,
+    JSONLSink,
+    LoggingSink,
+    StreamJSONSink,
+)
+from asgard.core.stages.bundle import BundleStage, export_classifications
 from asgard.core.stages.classify import ClassifyStage
 from asgard.core.stages.consolidate import ConsolidateStage
 from asgard.core.stages.mine import MineStage
@@ -39,19 +44,29 @@ def main(
 ) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.command != "run":
-        parser.print_help()
-        return
     try:
+        if args.command == "export":
+            export_classifications(args.run_dir)
+            return
+        if args.command != "run":
+            parser.print_help()
+            return
         config = prepare_run(_overrides(args), args.config, opener=opener)
+        _run_pipeline(
+            config,
+            opener,
+            handlers,
+            start=args.start,
+            only=args.only,
+            quiet=args.quiet,
+            json_logs=args.json_logs,
+        )
     except (ConfigError, ValidationError, ValueError) as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
-    try:
-        _run_pipeline(config, opener, handlers, start=args.start)
-    except (ConfigError, ValueError) as exc:
+    except Exception as exc:
         print(exc, file=sys.stderr)
-        raise SystemExit(2) from None
+        raise SystemExit(1) from None
 
 
 def _run_pipeline(
@@ -60,12 +75,17 @@ def _run_pipeline(
     handlers: dict[str, Any] | None,
     *,
     start: str | None = None,
+    only: str | None = None,
+    quiet: bool = False,
+    json_logs: bool = False,
 ) -> None:
-    sinks = [
-        CLIProgressSink(),
-        JSONLSink(config.output_dir / "events.jsonl"),
-        LoggingSink(),
-    ]
+    sinks: list[Any] = []
+    if not quiet:
+        sinks.append(CLIProgressSink())
+    sinks.append(JSONLSink(config.output_dir / "events.jsonl"))
+    if json_logs:
+        sinks.append(StreamJSONSink(sys.stdout))
+    sinks.append(LoggingSink())
     factory = LLMFactory(config.llm, handlers=handlers)
     stages = [
         MineStage(opener=opener),
@@ -76,10 +96,12 @@ def _run_pipeline(
         SecurityMdStage(config.repo, config.llm, path=config.security_md),
         BundleStage(config.export_xlsx),
     ]
+    chosen = only if only is not None else start
     Orchestrator(stages, sinks).run(
         config.output_dir,
+        only=only,
         start=start,
-        data=config if start in (None, stages[0].name) else None,
+        data=config if chosen in (None, stages[0].name) else None,
     )
 
 
@@ -100,13 +122,25 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument("repo", nargs="?")
-    run.add_argument(
+    span = run.add_mutually_exclusive_group()
+    span.add_argument(
         "--from",
         dest="start",
         choices=_PIPELINE,
         help="start at this stage and continue; earlier stages must already be done",
     )
+    span.add_argument(
+        "--only",
+        choices=_PIPELINE,
+        help="run this stage alone; earlier stages must already be done",
+    )
     run.add_argument("--config", type=Path)
+    run.add_argument("--quiet", action="store_true", help="hide the progress bar")
+    run.add_argument(
+        "--json-logs",
+        action="store_true",
+        help="write one JSON event per line to stdout",
+    )
     run.add_argument("--output-dir")
     run.add_argument("--security-md", type=Path)
     run.add_argument("--max-iterations", type=int)
@@ -124,6 +158,11 @@ def _parser() -> argparse.ArgumentParser:
     for role in _ROLES:
         run.add_argument(f"--{role}-provider")
         run.add_argument(f"--{role}-model")
+    export = sub.add_parser(
+        "export",
+        help="write a classification spreadsheet from a finished run",
+    )
+    export.add_argument("run_dir", type=Path)
     return parser
 
 

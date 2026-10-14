@@ -74,7 +74,7 @@ class BundleStage(Stage):
     def execute(self, ctx: RunContext, data: Any) -> dict[str, Any]:
         config = _config(ctx)
         if self.export_xlsx:
-            _write_xlsx(ctx)
+            export_classifications(ctx.run_dir)
         manifest = {
             "version": _package_version(),
             "commit": _commit(),
@@ -297,12 +297,13 @@ def _events(ctx: RunContext) -> list[dict[str, Any]]:
     return events
 
 
-def _write_xlsx(ctx: RunContext) -> None:
+def export_classifications(run_dir: Path) -> Path:
+    """Write ``bundle/classifications.xlsx`` from ``classify/output.json``."""
     try:
         from openpyxl import Workbook
     except ImportError:
         raise ConfigError(_OPENPYXL) from None
-    path = ctx.run_dir / "classify" / "output.json"
+    path = run_dir / "classify" / "output.json"
     data = _read(path, "classify output is invalid") if path.is_file() else None
     if not isinstance(data, list):
         raise ConfigError("classify output is invalid")
@@ -312,11 +313,12 @@ def _write_xlsx(ctx: RunContext) -> None:
     sheet.append(list(_XLSX))
     for item in data:
         sheet.append(_row(item))
-    destination = ctx.run_dir / "bundle" / "classifications.xlsx"
+    destination = run_dir / "bundle" / "classifications.xlsx"
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.stem}.tmp.xlsx")
     book.save(temporary)
     temporary.replace(destination)
+    return destination
 
 
 def _row(item: Any) -> list[Any]:

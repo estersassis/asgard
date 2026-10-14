@@ -49,7 +49,11 @@ To continue a finished prefix of that run:
 asgard run --config runs/owner__name/<utc-stamp>/config.json --from classify
 ```
 
-`--from` accepts `mine`, `normalize`, `classify`, `consolidate`, `synthesize`, `security_md`, or `bundle`. Every earlier stage must already have written its output.
+`--from` accepts `mine`, `normalize`, `classify`, `consolidate`, `synthesize`, `security_md`, or `bundle`. Every earlier stage must already have written its output. `--only` runs that one stage and stops, with the same requirement. The two flags cannot be combined.
+
+Progress goes to stderr. `--quiet` hides it. `--json-logs` writes one JSON event per line to stdout, and the two can be used together. The command exits 0 when it finishes, 2 when the settings or the requested stage are invalid, and 1 when the pipeline fails for another reason.
+
+`asgard export <run-dir>` writes `bundle/classifications.xlsx` from `classify/output.json`. It does not call a model and it does not rewrite the manifest.
 
 Consolidation does not call a model. It joins the classify summary, the normalized pull requests, and `classify/trace.jsonl`, then writes three files:
 
@@ -95,6 +99,9 @@ The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, 
 | `repo` | `owner/name` or a github.com URL |
 | `--config` | TOML or JSON settings file |
 | `--from` | Resume at `mine`, `normalize`, `classify`, `consolidate`, `synthesize`, `security_md`, or `bundle` |
+| `--only` | Run that one stage. Earlier stages must already be done |
+| `--quiet` | Hide the progress bar |
+| `--json-logs` | Write one JSON event per line to stdout |
 | `--security-md` | Where to write `SECURITY.md`. Default: `<run>/SECURITY.md` |
 | `--include-unresolved` | Also send unresolved and errored security discussions to synthesis |
 | `--export-xlsx` | Write `bundle/classifications.xlsx`. Off unless set |
