@@ -37,6 +37,15 @@ class PRFiltered(Event):
     reason: str
 
 
+class ClassifyProgress(Event):
+    """Where classify is in the run: one batch, or one pull request."""
+
+    type: Literal["ClassifyProgress"] = "ClassifyProgress"
+    kind: Literal["batch", "pull"]
+    index: int
+    total: int
+
+
 class ClassificationAttempt(Event):
     type: Literal["ClassificationAttempt"] = "ClassificationAttempt"
     pr_id: str

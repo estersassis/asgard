@@ -56,6 +56,8 @@ class RunConfig(BaseModel):
     llm: LLMSettings
     filters: Filters = Field(default_factory=Filters)
     max_iterations: int = 3
+    batch_size: int = 1
+    batch_max_chars: int | None = None
     prefilter: bool = False
     include_unresolved: bool = False
     export_xlsx: bool = False
@@ -77,6 +79,20 @@ class RunConfig(BaseModel):
     def _iterations(cls, value: int) -> int:
         if value < 1:
             raise ValueError("max_iterations must be >= 1")
+        return value
+
+    @field_validator("batch_size")
+    @classmethod
+    def _batch_size(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("batch_size must be >= 1")
+        return value
+
+    @field_validator("batch_max_chars")
+    @classmethod
+    def _batch_max_chars(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("batch_max_chars must be >= 1")
         return value
 
     def redacted_dump(self) -> dict[str, Any]:

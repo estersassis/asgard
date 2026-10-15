@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from asgard.cli.logs import show_logs
 from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.sinks import (
@@ -49,6 +50,9 @@ def main(
     try:
         if args.command == "export":
             export_classifications(args.run_dir)
+            return
+        if args.command == "logs":
+            show_logs(args.run_dir, follow=args.follow, stage=args.stage)
             return
         if args.command != "run":
             parser.print_help()
@@ -93,7 +97,12 @@ def _run_pipeline(
         MineStage(opener=opener),
         NormalizeStage(repo=config.repo),
         PrefilterStage(),
-        ClassifyStage(config.max_iterations, factory),
+        ClassifyStage(
+            config.max_iterations,
+            factory,
+            batch_size=config.batch_size,
+            batch_max_chars=config.batch_max_chars,
+        ),
         ConsolidateStage(config.include_unresolved),
         SynthesizeStage(config.repo, factory),
         SecurityMdStage(config.repo, config.llm, path=config.security_md),
@@ -147,6 +156,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir")
     run.add_argument("--security-md", type=Path)
     run.add_argument("--max-iterations", type=int)
+    run.add_argument("--batch-size", type=int)
+    run.add_argument("--batch-max-chars", type=int)
     run.add_argument("--prefilter", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--include-unresolved", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--export-xlsx", action=argparse.BooleanOptionalAction, default=None)
@@ -166,6 +177,17 @@ def _parser() -> argparse.ArgumentParser:
         help="write a classification spreadsheet from a finished run",
     )
     export.add_argument("run_dir", type=Path)
+    logs = sub.add_parser(
+        "logs",
+        help="print the progress log of a run, one stage at a time",
+    )
+    logs.add_argument("run_dir", type=Path)
+    logs.add_argument(
+        "--follow",
+        action="store_true",
+        help="keep reading new events until interrupted",
+    )
+    logs.add_argument("--stage", choices=_PIPELINE, help="show one stage")
     return parser
 
 
@@ -179,6 +201,10 @@ def _overrides(args: argparse.Namespace) -> dict:
         data["security_md"] = args.security_md
     if args.max_iterations is not None:
         data["max_iterations"] = args.max_iterations
+    if args.batch_size is not None:
+        data["batch_size"] = args.batch_size
+    if args.batch_max_chars is not None:
+        data["batch_max_chars"] = args.batch_max_chars
     if args.prefilter is not None:
         data["prefilter"] = args.prefilter
     if args.include_unresolved is not None:
