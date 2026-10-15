@@ -188,7 +188,15 @@ runs/owner__name/20260101T120000Z/
     classifications.xlsx
 ```
 
-`config.json` is the saved settings with secrets removed. `events.jsonl` is one progress event per line. `classifications.xlsx` appears only when `--export-xlsx` is set or when you run `asgard export` on this directory.
+`config.json` is the saved settings with secrets removed. `events.jsonl` is one progress event per line. `asgard logs <run-dir>` prints that file grouped by stage. It does not call a model. `--stage` limits the view to one stage. `--follow` keeps reading new lines until interrupted. During classify, a batched run shows the batch (`batch 2/12`) and a one-pull-request run shows the pull request (`pr 15/200`).
+
+```bash
+asgard logs runs/owner__name/<utc-stamp>
+asgard logs runs/owner__name/<utc-stamp> --stage classify
+asgard logs runs/owner__name/<utc-stamp> --follow
+```
+
+`classifications.xlsx` appears only when `--export-xlsx` is set or when you run `asgard export` on this directory.
 
 Consolidation does not call a model. It joins the classify summary, the normalized pull requests, and `classify/trace.jsonl`, then writes three files:
 

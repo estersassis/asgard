@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from asgard.cli.logs import show_logs
 from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.sinks import (
@@ -47,6 +48,9 @@ def main(
     try:
         if args.command == "export":
             export_classifications(args.run_dir)
+            return
+        if args.command == "logs":
+            show_logs(args.run_dir, follow=args.follow, stage=args.stage)
             return
         if args.command != "run":
             parser.print_help()
@@ -170,6 +174,17 @@ def _parser() -> argparse.ArgumentParser:
         help="write a classification spreadsheet from a finished run",
     )
     export.add_argument("run_dir", type=Path)
+    logs = sub.add_parser(
+        "logs",
+        help="print the progress log of a run, one stage at a time",
+    )
+    logs.add_argument("run_dir", type=Path)
+    logs.add_argument(
+        "--follow",
+        action="store_true",
+        help="keep reading new events until interrupted",
+    )
+    logs.add_argument("--stage", choices=_PIPELINE, help="show one stage")
     return parser
 
 

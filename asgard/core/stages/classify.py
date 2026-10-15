@@ -23,7 +23,12 @@ from asgard.core.evaluation import (
     deterministic_review,
     evaluate,
 )
-from asgard.core.events import ClassificationAttempt, EvaluatorVerdict, LoopFinished
+from asgard.core.events import (
+    ClassificationAttempt,
+    ClassifyProgress,
+    EvaluatorVerdict,
+    LoopFinished,
+)
 from asgard.core.normalization import NormalizedPullRequest
 from asgard.core.stage import RunContext, Stage
 from asgard.prompts.classifier import build_batch_messages as classifier_batch_messages
@@ -159,7 +164,10 @@ class ClassifyStage(Stage):
     def _run_singly(
         self, ctx: RunContext, pulls: list[NormalizedPullRequest]
     ) -> list[dict[str, Any]]:
-        def work(_item_id: str, pull: NormalizedPullRequest) -> dict[str, Any]:
+        index_of, total = _positions(pulls)
+
+        def work(item_id: str, pull: NormalizedPullRequest) -> dict[str, Any]:
+            ctx.emit(ClassifyProgress(kind="pull", index=index_of[item_id], total=total))
             return self._review(ctx, pull)
 
         return self.process_items(
@@ -180,9 +188,15 @@ class ClassifyStage(Stage):
             seen.add(pr_id)
             reviews.append(_PullReview(pull))
 
+        done_batches = 0
         while reviews:
+            groups = _groups(reviews, self.batch_size, self.batch_max_chars)
+            total = done_batches + len(groups)
             pending: list[_PullReview] = []
-            for group in _groups(reviews, self.batch_size, self.batch_max_chars):
+            for offset, group in enumerate(groups, start=1):
+                ctx.emit(
+                    ClassifyProgress(kind="batch", index=done_batches + offset, total=total)
+                )
                 self._review_group(ctx, group)
                 for review in group:
                     if not review.done:
@@ -190,6 +204,7 @@ class ClassifyStage(Stage):
                         continue
                     self.save_item(ctx, review.pull.context.pr_id, review.payload())
                     ctx.emit(LoopFinished(pr_id=review.pull.context.pr_id))
+            done_batches += len(groups)
             reviews = pending
 
         return _payloads_in_order(self._read_items(ctx), pulls)
@@ -493,22 +508,66 @@ def _prompt_sha256(messages: list[Message]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def batch_places(
+    pulls: list[NormalizedPullRequest],
+    batch_size: int,
+    batch_max_chars: int | None,
+) -> dict[str, tuple[int, int]]:
+    """Map each pull request to its first-wave batch index and the batch count."""
+    packed = _pack(
+        [(pull.context.pr_id, len(pull.model_dump_json(indent=2))) for pull in pulls],
+        batch_size,
+        batch_max_chars,
+    )
+    total = len(packed)
+    places: dict[str, tuple[int, int]] = {}
+    for index, group in enumerate(packed, start=1):
+        for pr_id in group:
+            places.setdefault(pr_id, (index, total))
+    return places
+
+
+def _positions(pulls: list[NormalizedPullRequest]) -> tuple[dict[str, int], int]:
+    index_of: dict[str, int] = {}
+    for pull in pulls:
+        pr_id = pull.context.pr_id
+        if pr_id not in index_of:
+            index_of[pr_id] = len(index_of) + 1
+    return index_of, len(index_of)
+
+
 def _groups(
     reviews: list[_PullReview],
     batch_size: int,
     batch_max_chars: int | None,
 ) -> list[list[_PullReview]]:
-    groups: list[list[_PullReview]] = []
-    current: list[_PullReview] = []
+    packed = _pack(
+        [
+            (review.pull.context.pr_id, len(review.pull.model_dump_json(indent=2)))
+            for review in reviews
+        ],
+        batch_size,
+        batch_max_chars,
+    )
+    by_id = {review.pull.context.pr_id: review for review in reviews}
+    return [[by_id[pr_id] for pr_id in group] for group in packed]
+
+
+def _pack(
+    sizes: list[tuple[str, int]],
+    batch_size: int,
+    batch_max_chars: int | None,
+) -> list[list[str]]:
+    groups: list[list[str]] = []
+    current: list[str] = []
     current_chars = 0
-    for review in reviews:
-        size = len(review.pull.model_dump_json(indent=2))
+    for pr_id, size in sizes:
         over_chars = batch_max_chars is not None and current_chars + size > batch_max_chars
         if current and (len(current) >= batch_size or over_chars):
             groups.append(current)
             current = []
             current_chars = 0
-        current.append(review)
+        current.append(pr_id)
         current_chars += size
     if current:
         groups.append(current)

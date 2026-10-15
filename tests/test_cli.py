@@ -2,10 +2,13 @@
 
 import json
 import urllib.request
+from io import StringIO
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
+from asgard.cli.logs import show_logs
 from asgard.cli.main import _PIPELINE, main
 from asgard.providers.handlers.fake import FakeHandler
 
@@ -239,3 +242,265 @@ def test_export_without_classifications_exits_2(
         main(["export", str(tmp_path)])
     assert caught.value.code == 2
     assert "classify output" in capsys.readouterr().err
+
+
+def _console() -> tuple[Console, StringIO]:
+    stream = StringIO()
+    console = Console(file=stream, force_terminal=False, no_color=True, width=100)
+    return console, stream
+
+
+def _dump(events: list[dict[str, object]]) -> str:
+    return "".join(json.dumps(event) + "\n" for event in events)
+
+
+def _sample_log() -> list[dict[str, object]]:
+    body = "do not print this body"
+    return [
+        {"type": "StageStarted", "stage": "mine", "at": "2026-10-15T00:00:00+00:00"},
+        {"type": "PRMined", "pr_id": "7", "at": "2026-10-15T00:00:01+00:00"},
+        {
+            "type": "StageFinished",
+            "stage": "mine",
+            "skipped": False,
+            "at": "2026-10-15T00:00:02+00:00",
+        },
+        {"type": "StageStarted", "stage": "classify", "at": "2026-10-15T00:00:00+00:00"},
+        {"type": "ClassificationAttempt", "pr_id": "42", "at": "2026-10-15T00:00:10+00:00"},
+        {
+            "type": "EvaluatorVerdict",
+            "pr_id": "42",
+            "approved": True,
+            "at": "2026-10-15T00:00:20+00:00",
+        },
+        {
+            "type": "EvaluatorVerdict",
+            "pr_id": "43",
+            "approved": False,
+            "at": "2026-10-15T00:00:30+00:00",
+        },
+        {"type": "LoopFinished", "pr_id": "42", "at": "2026-10-15T00:00:40+00:00"},
+        {
+            "type": "StageFinished",
+            "stage": "classify",
+            "skipped": False,
+            "at": "2026-10-15T00:01:04+00:00",
+        },
+        {"type": "StageStarted", "stage": "synthesize", "at": "2026-10-15T00:02:00+00:00"},
+        {"type": "SynthesisChunk", "text": body, "at": "2026-10-15T00:02:01+00:00"},
+        {
+            "type": "StageFinished",
+            "stage": "synthesize",
+            "skipped": False,
+            "at": "2026-10-15T00:02:02+00:00",
+        },
+    ]
+
+
+def test_logs_groups_stages_and_hides_the_guideline_body(tmp_path: Path) -> None:
+    (tmp_path / "events.jsonl").write_text(_dump(_sample_log()), encoding="utf-8")
+    console, stream = _console()
+
+    show_logs(tmp_path, console=console)
+
+    text = stream.getvalue()
+    assert "mine" in text
+    assert "classify" in text
+    assert "synthesize" in text
+    assert "approved" in text
+    assert "revise" in text
+    assert "42" in text
+    assert "43" in text
+    assert "4 events" in text
+    assert "1m 4s" in text
+    assert "guideline draft, 22 characters" in text
+    assert "do not print this body" not in text
+
+
+def test_logs_stage_filter_omits_other_stages(tmp_path: Path) -> None:
+    (tmp_path / "events.jsonl").write_text(_dump(_sample_log()), encoding="utf-8")
+    console, stream = _console()
+
+    show_logs(tmp_path, stage="classify", console=console)
+
+    text = stream.getvalue()
+    assert "classify" in text
+    assert "approved" in text
+    assert "revise" in text
+    assert "mined" not in text
+    assert "synthesize" not in text
+    assert "7" not in text
+
+
+def test_logs_missing_file_exits_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["logs", str(tmp_path)])
+    assert caught.value.code == 2
+    assert "events.jsonl" in capsys.readouterr().err
+
+
+def test_logs_invalid_json_exits_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "events.jsonl").write_text("not json\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        main(["logs", str(tmp_path)])
+    assert caught.value.code == 2
+    assert "not valid json" in capsys.readouterr().err
+
+
+def test_logs_show_the_batch_and_the_pull_request_place(tmp_path: Path) -> None:
+    (tmp_path / "events.jsonl").write_text(
+        _dump(
+            [
+                {"type": "StageStarted", "stage": "classify", "at": "2026-10-15T00:00:00+00:00"},
+                {
+                    "type": "ClassifyProgress",
+                    "kind": "batch",
+                    "index": 2,
+                    "total": 12,
+                    "at": "2026-10-15T00:00:01+00:00",
+                },
+                {
+                    "type": "ClassificationAttempt",
+                    "pr_id": "42",
+                    "at": "2026-10-15T00:00:02+00:00",
+                },
+                {
+                    "type": "EvaluatorVerdict",
+                    "pr_id": "42",
+                    "approved": True,
+                    "at": "2026-10-15T00:00:03+00:00",
+                },
+                {
+                    "type": "StageFinished",
+                    "stage": "classify",
+                    "skipped": False,
+                    "at": "2026-10-15T00:00:04+00:00",
+                },
+                {"type": "StageStarted", "stage": "classify", "at": "2026-10-15T00:01:00+00:00"},
+                {
+                    "type": "ClassifyProgress",
+                    "kind": "pull",
+                    "index": 15,
+                    "total": 200,
+                    "at": "2026-10-15T00:01:01+00:00",
+                },
+                {
+                    "type": "ClassificationAttempt",
+                    "pr_id": "9",
+                    "at": "2026-10-15T00:01:02+00:00",
+                },
+                {
+                    "type": "StageFinished",
+                    "stage": "classify",
+                    "skipped": False,
+                    "at": "2026-10-15T00:01:03+00:00",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    console, stream = _console()
+
+    show_logs(tmp_path, console=console)
+
+    lines = stream.getvalue().splitlines()
+    batch = next(line for line in lines if "2/12" in line and "classified" not in line)
+    classified = next(line for line in lines if "classified" in line and "42" in line)
+    approved = next(line for line in lines if "approved" in line)
+    pull = next(line for line in lines if "15/200" in line and "classified" not in line)
+    later = next(line for line in lines if "classified" in line and "9" in line)
+    assert "batch" in batch
+    assert "batch 2/12" in classified
+    assert "batch 2/12" in approved
+    assert "pr" in pull
+    assert "pr 15/200" in later
+    assert lines.index(batch) < lines.index(classified)
+    assert lines.index(pull) < lines.index(later)
+
+
+def test_logs_infer_batch_and_pull_place_without_progress_events(tmp_path: Path) -> None:
+    pulls = [_normalized(pr_id) for pr_id in ("1", "2", "3")]
+    normalize = tmp_path / "normalize"
+    normalize.mkdir()
+    (normalize / "output.json").write_text(json.dumps(pulls), encoding="utf-8")
+    (tmp_path / "config.json").write_text(json.dumps({"batch_size": 1}), encoding="utf-8")
+    (tmp_path / "events.jsonl").write_text(
+        _dump(
+            [
+                {"type": "StageStarted", "stage": "classify"},
+                {"type": "ClassificationAttempt", "pr_id": "2"},
+                {"type": "StageFinished", "stage": "classify", "skipped": False},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    console, stream = _console()
+    show_logs(tmp_path, console=console)
+    assert "pr 2/3" in stream.getvalue()
+
+    (tmp_path / "config.json").write_text(json.dumps({"batch_size": 2}), encoding="utf-8")
+    (tmp_path / "events.jsonl").write_text(
+        _dump(
+            [
+                {"type": "StageStarted", "stage": "classify"},
+                {"type": "ClassificationAttempt", "pr_id": "3"},
+                {"type": "StageFinished", "stage": "classify", "skipped": False},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    console, stream = _console()
+    show_logs(tmp_path, console=console)
+    assert "batch 2/2" in stream.getvalue()
+
+
+def _normalized(pr_id: str) -> dict[str, object]:
+    return {
+        "schema_version": "1",
+        "context": {
+            "repository": "acme/app",
+            "pr_id": pr_id,
+            "title": "Fix",
+            "state": "open",
+            "is_merged": False,
+        },
+        "description": "note",
+        "general_discussion": [],
+        "code_review_threads": [],
+    }
+
+
+def test_logs_follow_prints_a_line_appended_after_the_first_read(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps({"type": "StageStarted", "stage": "mine", "at": "2026-10-15T00:00:00+00:00"})
+        + "\n",
+        encoding="utf-8",
+    )
+    console, stream = _console()
+    calls = {"n": 0}
+
+    def pause(_seconds: float) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "ClassificationAttempt",
+                            "pr_id": "99",
+                            "at": "2026-10-15T00:00:05+00:00",
+                        }
+                    )
+                    + "\n"
+                )
+            return
+        raise KeyboardInterrupt
+
+    show_logs(tmp_path, follow=True, console=console, pause=pause)
+
+    text = stream.getvalue()
+    assert "mine" in text
+    assert "classified" in text
+    assert "99" in text
+    assert calls["n"] == 2

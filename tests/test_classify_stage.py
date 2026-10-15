@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from asgard.core.classification import classify as classify_pull
-from asgard.core.events import LoopFinished
+from asgard.core.events import ClassifyProgress, LoopFinished
 from asgard.core.normalization import NormalizedPullRequest, PullRequestContext
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.stage import STAGE_NAMES, RunContext
@@ -373,6 +373,44 @@ def test_metrics_count_first_approval_and_a_decision_flip(tmp_path: Path) -> Non
         "tokens_per_pr": {"input": 9.0, "output": 15.0},
         "single_pr_retries": 0,
     }
+
+
+def test_pull_progress_is_the_place_in_the_set(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            _classification(False, "one"),
+            _verdict("APPROVE"),
+            _classification(False, "two"),
+            _verdict("APPROVE"),
+        ]
+    )
+
+    _output, events = _run(tmp_path, handler, [_pull("1"), _pull("2")])
+
+    assert [event for event in events if isinstance(event, ClassifyProgress)] == [
+        ClassifyProgress(kind="pull", index=1, total=2),
+        ClassifyProgress(kind="pull", index=2, total=2),
+    ]
+
+
+def test_batch_progress_counts_each_group(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            _batch_classification([("1", False, "a"), ("2", False, "b")]),
+            _batch_verdict(["1", "2"]),
+            _classification(False, "c"),
+            _verdict("APPROVE"),
+        ]
+    )
+
+    _output, events = _run(
+        tmp_path, handler, [_pull("1"), _pull("2"), _pull("3")], batch_size=2
+    )
+
+    assert [event for event in events if isinstance(event, ClassifyProgress)] == [
+        ClassifyProgress(kind="batch", index=1, total=2),
+        ClassifyProgress(kind="batch", index=2, total=2),
+    ]
 
 
 def test_batch_size_limits_classifier_calls_on_the_first_iteration(tmp_path: Path) -> None:
