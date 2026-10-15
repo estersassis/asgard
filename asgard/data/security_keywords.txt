@@ -1,0 +1,18 @@
+# Case-insensitive substrings. One term per line. Lines starting with # are comments.
+auth
+csrf
+xss
+injection
+token
+password
+cve
+vulnerab
+sanitiz
+security
+secret
+credential
+encrypt
+permission
+privilege
+oauth
+session

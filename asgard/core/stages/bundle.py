@@ -21,6 +21,7 @@ _ROLES = ("classifier", "evaluator", "synthesizer")
 _PIPELINE = (
     "mine",
     "normalize",
+    "prefilter",
     "classify",
     "consolidate",
     "synthesize",
@@ -28,7 +29,7 @@ _PIPELINE = (
     "bundle",
 )
 _SECRET_KEYS = ("github_token", "keys")
-_LIST_OUTPUTS = ("mine", "normalize", "classify", "consolidate")
+_LIST_OUTPUTS = ("mine", "normalize", "prefilter", "classify", "consolidate")
 _FILES = {
     "config.json": "Redacted run settings.",
     "events.jsonl": "Progress events for the run.",
@@ -37,6 +38,8 @@ _FILES = {
     "mine/output.json": "Mined pull request numbers.",
     "normalize/output.json": "Normalized pull requests.",
     "normalize/items.jsonl": "Per-pull-request checkpoint for normalization.",
+    "prefilter/output.json": "Pull requests kept for classification.",
+    "prefilter/removed.json": "Pre-filter counts and the removed pull requests.",
     "classify/output.json": "Classification summary for each pull request.",
     "classify/items.jsonl": "Per-pull-request checkpoint for classification.",
     "classify/trace.jsonl": "One trace line per model call.",
@@ -130,15 +133,33 @@ def _models(config: dict[str, Any] | None) -> dict[str, dict[str, str]] | None:
 
 
 def _counts(ctx: RunContext) -> dict[str, int | None]:
-    mined = _list_length(ctx, "mine")
     summary = _summary(ctx)
+    entered, kept = _prefilter_counts(ctx)
     return {
-        "mined": mined,
+        "mined": _list_length(ctx, "mine"),
         "filtered": _filtered(ctx),
+        "prefilter_in": entered,
+        "prefilter_out": kept,
         "security": summary.get("security"),
         "non_security": summary.get("non_security"),
         "unresolved": summary.get("unresolved"),
     }
+
+
+def _prefilter_counts(ctx: RunContext) -> tuple[int | None, int | None]:
+    path = ctx.run_dir / "prefilter" / "removed.json"
+    if not path.is_file():
+        return None, None
+    data = _read(path, "prefilter counts are invalid")
+    if not isinstance(data, dict):
+        raise ConfigError("prefilter counts are invalid")
+    return _count(data.get("before")), _count(data.get("after"))
+
+
+def _count(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError("prefilter counts are invalid")
+    return value
 
 
 def _summary(ctx: RunContext) -> dict[str, int | None]:
