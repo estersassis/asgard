@@ -35,6 +35,21 @@ class Finding(BaseModel):
     explanation: str = Field(min_length=1)
 
 
+def _consistent(verdict: Verdict, findings: list[Finding], feedback: str) -> None:
+    criteria = [finding.criterion for finding in findings]
+    if criteria != list(_CRITERIA):
+        raise ValueError(
+            "findings must be decision, evidence, completeness, and rationale, in that order"
+        )
+    all_passed = all(finding.passed for finding in findings)
+    if verdict == "APPROVE" and not all_passed:
+        raise ValueError("APPROVE requires every finding to pass")
+    if verdict == "REVISE" and all_passed:
+        raise ValueError("REVISE requires at least one finding with passed false")
+    if verdict == "REVISE" and not feedback:
+        raise ValueError("REVISE requires non-empty feedback")
+
+
 class Evaluation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -43,20 +58,31 @@ class Evaluation(BaseModel):
     feedback: str
 
     @model_validator(mode="after")
-    def _consistent(self) -> "Evaluation":
-        criteria = [finding.criterion for finding in self.findings]
-        if criteria != list(_CRITERIA):
-            raise ValueError(
-                "findings must be decision, evidence, completeness, and rationale, in that order"
-            )
-        all_passed = all(finding.passed for finding in self.findings)
-        if self.verdict == "APPROVE" and not all_passed:
-            raise ValueError("APPROVE requires every finding to pass")
-        if self.verdict == "REVISE" and all_passed:
-            raise ValueError("REVISE requires at least one finding with passed false")
-        if self.verdict == "REVISE" and not self.feedback:
-            raise ValueError("REVISE requires non-empty feedback")
+    def _check_consistent(self) -> "Evaluation":
+        _consistent(self.verdict, self.findings, self.feedback)
         return self
+
+
+class BatchEvaluationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pr_id: str
+    verdict: Verdict
+    findings: list[Finding]
+    feedback: str
+
+    @model_validator(mode="after")
+    def _check_consistent(self) -> "BatchEvaluationItem":
+        _consistent(self.verdict, self.findings, self.feedback)
+        return self
+
+
+class BatchEvaluation(BaseModel):
+    """One evaluator response covering every pair in the call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[BatchEvaluationItem]
 
 
 def evaluate(

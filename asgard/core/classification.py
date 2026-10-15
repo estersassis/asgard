@@ -32,6 +32,13 @@ class Evidence(BaseModel):
         return value
 
 
+def _evidence_matches_decision(has_security_discussion: bool, evidence: list[Evidence]) -> None:
+    if has_security_discussion and not evidence:
+        raise ValueError("evidence is required when has_security_discussion is true")
+    if not has_security_discussion and evidence:
+        raise ValueError("evidence must be empty when has_security_discussion is false")
+
+
 class Classification(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -40,12 +47,31 @@ class Classification(BaseModel):
     rationale: str
 
     @model_validator(mode="after")
-    def _evidence_matches_decision(self) -> "Classification":
-        if self.has_security_discussion and not self.evidence:
-            raise ValueError("evidence is required when has_security_discussion is true")
-        if not self.has_security_discussion and self.evidence:
-            raise ValueError("evidence must be empty when has_security_discussion is false")
+    def _check_evidence(self) -> "Classification":
+        _evidence_matches_decision(self.has_security_discussion, self.evidence)
         return self
+
+
+class BatchClassificationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pr_id: str
+    has_security_discussion: bool
+    evidence: list[Evidence]
+    rationale: str
+
+    @model_validator(mode="after")
+    def _check_evidence(self) -> "BatchClassificationItem":
+        _evidence_matches_decision(self.has_security_discussion, self.evidence)
+        return self
+
+
+class BatchClassification(BaseModel):
+    """One classifier response covering every pull request in the call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[BatchClassificationItem]
 
 
 def classify(
