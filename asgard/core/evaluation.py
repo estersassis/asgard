@@ -85,6 +85,20 @@ class BatchEvaluation(BaseModel):
     results: list[BatchEvaluationItem]
 
 
+def deterministic_review(
+    pull: NormalizedPullRequest,
+    classification: Classification,
+    *,
+    emit: Callable[[Event], None],
+) -> Evaluation | None:
+    """Return a REVISE when a quote cannot be checked, without calling the model."""
+    checked = _quote_revision(pull, classification)
+    if checked is None:
+        return None
+    emit(EvaluatorVerdict(pr_id=pull.context.pr_id, approved=False))
+    return checked
+
+
 def evaluate(
     pull: NormalizedPullRequest,
     classification: Classification,
@@ -93,9 +107,8 @@ def evaluate(
     emit: Callable[[Event], None],
 ) -> Evaluation:
     """Review one classification. Emit a verdict only after a result exists."""
-    checked = _quote_revision(pull, classification)
+    checked = deterministic_review(pull, classification, emit=emit)
     if checked is not None:
-        emit(EvaluatorVerdict(pr_id=pull.context.pr_id, approved=False))
         return checked
     messages = build_messages(pull, classification)
     response = factory.generate("evaluator", messages, schema=Evaluation)
