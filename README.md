@@ -99,6 +99,7 @@ Settings can live in a TOML or JSON file passed with `--config`. Flags override 
 ```toml
 repo = "owner/name"
 max_iterations = 3
+batch_size = 1
 include_unresolved = false
 export_xlsx = false
 
@@ -124,7 +125,7 @@ model = "llama3.1"
 model = "llama3.1"
 ```
 
-`max_iterations` is the cap on classifier–evaluator rounds for one pull request (default 3). A role block inherits `provider` and `model` from `[llm.default]` when it omits them. Each role also accepts `temperature` (default `0`) and `timeout` in seconds (default `300`). The roles are `classifier`, `evaluator`, and `synthesizer`.
+`max_iterations` is the cap on classifier–evaluator rounds for one pull request (default 3). `batch_size` is how many still-active pull requests the classifier judges in one call, and how many the evaluator judges in one call (default 1). `batch_max_chars`, when set, closes a batch before `batch_size` if the next pull request would pass that many characters. A pull request larger than the cap is sent alone. A role block inherits `provider` and `model` from `[llm.default]` when it omits them. Each role also accepts `temperature` (default `0`) and `timeout` in seconds (default `300`). The roles are `classifier`, `evaluator`, and `synthesizer`.
 
 The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, `until` (`YYYY-MM-DD`), and `max_prs`.
 
@@ -141,6 +142,8 @@ The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, 
 | `--export-xlsx` | Write `bundle/classifications.xlsx`. Off unless set |
 | `--output-dir` | Run directory. Default: `runs/<owner>__<name>/<utc-stamp>` |
 | `--max-iterations` | Classifier–evaluator rounds per pull request |
+| `--batch-size` | Pull requests per classifier or evaluator call. Default 1 |
+| `--batch-max-chars` | Character cap for one batch. A larger single pull request still goes alone |
 | `--state` | `open`, `closed`, or `all` |
 | `--since`, `--until` | Creation-date bounds |
 | `--max-prs` | Stop after this many pull requests |

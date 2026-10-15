@@ -90,7 +90,12 @@ def _run_pipeline(
     stages = [
         MineStage(opener=opener),
         NormalizeStage(repo=config.repo),
-        ClassifyStage(config.max_iterations, factory),
+        ClassifyStage(
+            config.max_iterations,
+            factory,
+            batch_size=config.batch_size,
+            batch_max_chars=config.batch_max_chars,
+        ),
         ConsolidateStage(config.include_unresolved),
         SynthesizeStage(config.repo, factory),
         SecurityMdStage(config.repo, config.llm, path=config.security_md),
@@ -144,6 +149,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir")
     run.add_argument("--security-md", type=Path)
     run.add_argument("--max-iterations", type=int)
+    run.add_argument("--batch-size", type=int)
+    run.add_argument("--batch-max-chars", type=int)
     run.add_argument("--prefilter", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--include-unresolved", action=argparse.BooleanOptionalAction, default=None)
     run.add_argument("--export-xlsx", action=argparse.BooleanOptionalAction, default=None)
@@ -176,6 +183,10 @@ def _overrides(args: argparse.Namespace) -> dict:
         data["security_md"] = args.security_md
     if args.max_iterations is not None:
         data["max_iterations"] = args.max_iterations
+    if args.batch_size is not None:
+        data["batch_size"] = args.batch_size
+    if args.batch_max_chars is not None:
+        data["batch_max_chars"] = args.batch_max_chars
     if args.prefilter is not None:
         data["prefilter"] = args.prefilter
     if args.include_unresolved is not None:

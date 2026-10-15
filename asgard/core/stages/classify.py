@@ -89,9 +89,17 @@ class _RecordingFactory:
 class ClassifyStage(Stage):
     name = "classify"
 
-    def __init__(self, max_iterations: int, factory: LLMFactory) -> None:
+    def __init__(
+        self,
+        max_iterations: int,
+        factory: LLMFactory,
+        batch_size: int = 1,
+        batch_max_chars: int | None = None,
+    ) -> None:
         self.max_iterations = max_iterations
         self.factory = factory
+        self.batch_size = batch_size
+        self.batch_max_chars = batch_max_chars
         self._log = _TraceLog()
         self._traced = _RecordingFactory(factory, self._log)
 
