@@ -227,6 +227,50 @@ def test_node_id_resolves_to_the_pull_number(tmp_path: Path) -> None:
     ]
 
 
+def test_batch_trace_line_is_indexed_for_each_pull(tmp_path: Path) -> None:
+    normalize = tmp_path / "normalize"
+    normalize.mkdir()
+    documents = [
+        {"context": {"repository": "acme/app", "pr_id": "1", "title": "One"}},
+        {"context": {"repository": "acme/app", "pr_id": "2", "title": "Two"}},
+    ]
+    (normalize / "output.json").write_text(json.dumps(documents), encoding="utf-8")
+    classify = tmp_path / "classify"
+    classify.mkdir()
+    lines = [
+        {"batch_id": "abc", "pr_ids": ["1", "2"], "role": "classifier"},
+        {"pr_id": "1", "role": "evaluator"},
+        {"batch_id": "def", "pr_ids": ["2", "1"], "role": "evaluator"},
+    ]
+    body = "".join(json.dumps(line) + "\n" for line in lines)
+    (classify / "trace.jsonl").write_text(body, encoding="utf-8")
+    mined = tmp_path / "mine"
+    mined.mkdir()
+    (mined / "output.json").write_text(json.dumps([1, 2]), encoding="utf-8")
+
+    _run(
+        tmp_path,
+        [
+            _record("1", "approved", classification=_classification(True, "one")),
+            _record("2", "approved", classification=_classification(False, "two")),
+        ],
+    )
+
+    audit = _audit(tmp_path)
+    assert audit[0]["trace_lines"] == [1, 2, 3]
+    assert audit[1]["trace_lines"] == [1, 3]
+    (tmp_path / "consolidate" / "output.json").unlink()
+    (classify / "trace.jsonl").write_text(json.dumps({"pr_ids": ["1", 2]}) + "\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="not valid json"):
+        _run(
+            tmp_path,
+            [
+                _record("1", "approved", classification=_classification(True, "one")),
+                _record("2", "approved", classification=_classification(False, "two")),
+            ],
+        )
+
+
 def test_mine_set_and_malformed_input_raise(tmp_path: Path) -> None:
     _prepare(tmp_path, [1])
     approved = _record("1", "approved", classification=_classification(True, "token check"))

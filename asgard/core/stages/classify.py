@@ -724,7 +724,13 @@ def _metrics(payloads: list[dict[str, Any]]) -> dict[str, Any]:
             "approval_rate_final": 0.0,
             "mean_iterations": 0.0,
             "decision_flips": 0,
+            "llm_calls": 0,
+            "calls_per_pr": 0.0,
+            "tokens_per_pr": {"input": 0.0, "output": 0.0},
+            "single_pr_retries": 0,
         }
+    calls = _llm_calls(payloads)
+    incoming, outgoing = _tokens_per_pr(payloads)
     first = sum(1 for payload in payloads if _approved_on_first(payload))
     final = sum(1 for payload in payloads if payload["status"] == "approved")
     iterations = sum(payload["iterations"] for payload in payloads)
@@ -733,34 +739,151 @@ def _metrics(payloads: list[dict[str, Any]]) -> dict[str, Any]:
         "approval_rate_final": final / total,
         "mean_iterations": iterations / total,
         "decision_flips": _flips(payloads),
+        "llm_calls": calls,
+        "calls_per_pr": calls / total,
+        "tokens_per_pr": {"input": incoming, "output": outgoing},
+        "single_pr_retries": _single_pr_retries(payloads),
     }
 
 
-def _approved_on_first(payload: dict[str, Any]) -> bool:
-    for line in payload["traces"]:
-        if line["role"] != "evaluator":
+def _llm_calls(payloads: list[dict[str, Any]]) -> int:
+    return sum(1 for line in _unique_trace_lines(payloads) if _is_llm_call(line))
+
+
+def _is_llm_call(line: dict[str, Any]) -> bool:
+    """A model call, including a failed one. A deterministic review is not."""
+    return line.get("error") is not None or line.get("raw_response") is not None
+
+
+def _tokens_per_pr(payloads: list[dict[str, Any]]) -> tuple[float, float]:
+    """Average input and output tokens. A shared call is split across its ids."""
+    total = len(payloads)
+    if total == 0:
+        return 0.0, 0.0
+    known = {payload["pr_id"] for payload in payloads}
+    incoming = {pr_id: 0.0 for pr_id in known}
+    outgoing = {pr_id: 0.0 for pr_id in known}
+    for line in _unique_trace_lines(payloads):
+        if not _is_llm_call(line):
             continue
-        return line.get("verdict") == "APPROVE" and not line.get("error")
+        owners = _owners(line)
+        if not owners:
+            continue
+        share_in = _token_count(line.get("input_tokens")) / len(owners)
+        share_out = _token_count(line.get("output_tokens")) / len(owners)
+        for pr_id in owners:
+            if pr_id not in known:
+                continue
+            incoming[pr_id] += share_in
+            outgoing[pr_id] += share_out
+    return sum(incoming.values()) / total, sum(outgoing.values()) / total
+
+
+def _owners(line: dict[str, Any]) -> list[str]:
+    pr_ids = line.get("pr_ids")
+    if isinstance(pr_ids, list):
+        return [pr_id for pr_id in pr_ids if isinstance(pr_id, str)]
+    pr_id = line.get("pr_id")
+    if isinstance(pr_id, str):
+        return [pr_id]
+    return []
+
+
+def _token_count(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def _single_pr_retries(payloads: list[dict[str, Any]]) -> int:
+    """PRs sent alone after a batch call that did not include their result."""
+    count = 0
+    for payload in payloads:
+        pr_id = payload["pr_id"]
+        awaiting: str | None = None
+        awaiting_iteration: Any = None
+        for line in payload["traces"]:
+            if isinstance(line.get("pr_ids"), list):
+                if _batch_has_result(line, pr_id):
+                    awaiting = None
+                else:
+                    role = line.get("role")
+                    awaiting = role if isinstance(role, str) else None
+                    awaiting_iteration = line.get("iteration")
+                continue
+            if awaiting is None or line.get("role") != awaiting:
+                continue
+            if line.get("pr_id") == pr_id and line.get("iteration") == awaiting_iteration:
+                count += 1
+                awaiting = None
+    return count
+
+
+def _batch_has_result(line: dict[str, Any], pr_id: str) -> bool:
+    if line.get("error"):
+        return False
+    parsed = line.get("parsed")
+    if not isinstance(parsed, dict):
+        return False
+    return isinstance(parsed.get(pr_id), dict)
+
+
+def _approved_on_first(payload: dict[str, Any]) -> bool:
+    pr_id = payload["pr_id"]
+    for line in payload["traces"]:
+        if line.get("role") != "evaluator" or line.get("error"):
+            continue
+        if line.get("iteration") != 1:
+            return False
+        return _verdict_of(line, pr_id) == "APPROVE"
     return False
+
+
+def _verdict_of(line: dict[str, Any], pr_id: str) -> str | None:
+    if isinstance(line.get("pr_ids"), list):
+        parsed = line.get("parsed")
+        if not isinstance(parsed, dict):
+            return None
+        item = parsed.get(pr_id)
+        if not isinstance(item, dict):
+            return None
+        verdict = item.get("verdict")
+        return verdict if isinstance(verdict, str) else None
+    verdict = line.get("verdict")
+    return verdict if isinstance(verdict, str) else None
 
 
 def _flips(payloads: list[dict[str, Any]]) -> int:
     count = 0
     for payload in payloads:
         previous: bool | None = None
+        pr_id = payload["pr_id"]
         for line in payload["traces"]:
-            if line["role"] != "classifier" or line.get("error"):
+            if line.get("role") != "classifier" or line.get("error"):
                 continue
-            parsed = line.get("parsed")
-            if not isinstance(parsed, dict):
-                continue
-            decision = parsed.get("has_security_discussion")
-            if not isinstance(decision, bool):
+            decision = _decision_of(line, pr_id)
+            if decision is None:
                 continue
             if previous is not None and decision != previous:
                 count += 1
             previous = decision
     return count
+
+
+def _decision_of(line: dict[str, Any], pr_id: str) -> bool | None:
+    parsed = line.get("parsed")
+    if not isinstance(parsed, dict):
+        return None
+    if isinstance(line.get("pr_ids"), list):
+        item = parsed.get(pr_id)
+        if not isinstance(item, dict):
+            return None
+        decision = item.get("has_security_discussion")
+    else:
+        decision = parsed.get("has_security_discussion")
+    if isinstance(decision, bool):
+        return decision
+    return None
 
 
 def _replace(path: Path, text: str) -> None:
