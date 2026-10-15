@@ -11,6 +11,7 @@ import pytest
 
 from asgard.cli.main import main
 from asgard.core.config import ConfigError, load_dotenv, load_run, prepare_run
+from asgard.providers.handlers.fake import FakeHandler
 
 TOKEN = "ghp_test_token"
 KEY = "sk-test-key"
@@ -85,6 +86,8 @@ def test_flag_overrides_file_and_omitted_flag_stays(
     config_path = _settings(tmp_path)
     config, _ = load_run(config_path, {"max_iterations": 9, "filters": {"state": "open"}})
     assert config.max_iterations == 9
+    assert config.batch_size == 1
+    assert config.batch_max_chars is None
     assert config.filters.state == "open"
     assert config.prefilter is True
     assert config.include_unresolved is False
@@ -189,6 +192,10 @@ def test_rejects_bad_repo_and_dates_before_network(
         load_run(_settings(tmp_path), {"filters": {"since": "2024-02-01", "until": "2024-01-01"}})
     with pytest.raises(ConfigError, match="max_iterations"):
         load_run(_settings(tmp_path), {"max_iterations": 0})
+    with pytest.raises(ConfigError, match="batch_size"):
+        load_run(_settings(tmp_path), {"batch_size": 0})
+    with pytest.raises(ConfigError, match="batch_max_chars"):
+        load_run(_settings(tmp_path), {"batch_max_chars": 0})
     assert called is False
 
 
@@ -270,6 +277,88 @@ def test_missing_token_and_default_run_dir(tmp_path: Path, monkeypatch: pytest.M
     assert config.output_dir.parts[-2] == "owner__name"
     assert "runs" in config.output_dir.parts
     assert (config.output_dir / "config.json").is_file()
+
+
+def _approved_handler() -> FakeHandler:
+    classification = json.dumps(
+        {
+            "has_security_discussion": False,
+            "evidence": [],
+            "rationale": "checked",
+        }
+    )
+    findings = [
+        {"criterion": name, "passed": True, "explanation": f"{name} checked"}
+        for name in ("decision", "evidence", "completeness", "rationale")
+    ]
+    verdict = json.dumps({"verdict": "APPROVE", "findings": findings, "feedback": ""})
+    return FakeHandler([classification, verdict])
+
+
+def test_batch_flags_are_saved_and_copied_into_the_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    monkeypatch.setattr("asgard.core.config.load_dotenv", lambda path=Path(".env"): None)
+    out = tmp_path / "out"
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "jpadilla/pyjwt"',
+                "batch_size = 2",
+                f'output_dir = "{out}"',
+                "",
+                "[llm.default]",
+                'provider = "fake"',
+                'model = "fake"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        url = request.full_url
+        if "/pulls?" in url:
+            return _Response(
+                body=json.dumps(
+                    [
+                        {
+                            "number": 4,
+                            "created_at": "2024-01-01T00:00:00Z",
+                            "updated_at": "2024-01-01T00:00:00Z",
+                        }
+                    ]
+                ).encode()
+            )
+        if url.endswith("/pulls/4"):
+            return _Response(body=json.dumps({"number": 4, "body": "change"}).encode())
+        return _Response(body=b"[]")
+
+    main(
+        [
+            "run",
+            "--config",
+            str(source),
+            "--max-prs",
+            "1",
+            "--quiet",
+            "--batch-size",
+            "4",
+            "--batch-max-chars",
+            "8000",
+        ],
+        opener=opener,
+        handlers={"fake": _approved_handler()},
+    )
+    saved = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert saved["batch_size"] == 4
+    assert saved["batch_max_chars"] == 8000
+    assert manifest["config"]["batch_size"] == 4
+    assert manifest["config"]["batch_max_chars"] == 8000
 
 
 def test_dotenv_does_not_override_the_environment(

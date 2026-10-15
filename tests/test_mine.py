@@ -263,6 +263,7 @@ def test_run_mines_after_saving_config(
         "StageStarted",
         "StageFinished",
         "StageStarted",
+        "ClassifyProgress",
         "ClassificationAttempt",
         "EvaluatorVerdict",
         "LoopFinished",
@@ -281,15 +282,16 @@ def test_run_mines_after_saving_config(
     assert events[3]["stage"] == "normalize"
     assert events[4] == {"type": "StageFinished", "stage": "normalize", "skipped": False}
     assert events[5]["stage"] == "classify"
-    assert events[9] == {"type": "StageFinished", "stage": "classify", "skipped": False}
-    assert events[10]["stage"] == "consolidate"
-    assert events[11] == {"type": "StageFinished", "stage": "consolidate", "skipped": False}
-    assert events[12]["stage"] == "synthesize"
-    assert events[13] == {"type": "StageFinished", "stage": "synthesize", "skipped": False}
-    assert events[14]["stage"] == "security_md"
-    assert events[15] == {"type": "StageFinished", "stage": "security_md", "skipped": False}
-    assert events[16]["stage"] == "bundle"
-    assert events[17] == {"type": "StageFinished", "stage": "bundle", "skipped": False}
+    assert events[6] == {"type": "ClassifyProgress", "kind": "pull", "index": 1, "total": 1}
+    assert events[10] == {"type": "StageFinished", "stage": "classify", "skipped": False}
+    assert events[11]["stage"] == "consolidate"
+    assert events[12] == {"type": "StageFinished", "stage": "consolidate", "skipped": False}
+    assert events[13]["stage"] == "synthesize"
+    assert events[14] == {"type": "StageFinished", "stage": "synthesize", "skipped": False}
+    assert events[15]["stage"] == "security_md"
+    assert events[16] == {"type": "StageFinished", "stage": "security_md", "skipped": False}
+    assert events[17]["stage"] == "bundle"
+    assert events[18] == {"type": "StageFinished", "stage": "bundle", "skipped": False}
     assert not any(event["type"] == "SynthesisChunk" for event in events)
     assert not any(event["type"] == "CitationWarning" for event in events)
     guideline = json.loads((out / "synthesize" / "output.json").read_text(encoding="utf-8"))

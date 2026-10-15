@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from asgard.core.classification import classify as classify_pull
-from asgard.core.events import LoopFinished
+from asgard.core.events import ClassifyProgress, LoopFinished
 from asgard.core.normalization import NormalizedPullRequest, PullRequestContext
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.stage import STAGE_NAMES, RunContext
@@ -93,9 +93,16 @@ def _run(
     pulls: list[NormalizedPullRequest],
     *,
     max_iterations: int = 3,
+    batch_size: int = 1,
+    batch_max_chars: int | None = None,
 ) -> tuple[list[dict[str, object]], list[object]]:
     events: list[object] = []
-    stage = ClassifyStage(max_iterations, _factory(handler))
+    stage = ClassifyStage(
+        max_iterations,
+        _factory(handler),
+        batch_size=batch_size,
+        batch_max_chars=batch_max_chars,
+    )
     ctx = RunContext(tmp_path, events.append)
     output = stage.run(ctx, [pull.model_dump() for pull in pulls])
     return output, events
@@ -105,8 +112,76 @@ def _classifier_calls(handler: FakeHandler) -> list[list[Message]]:
     return [call for call in handler.calls if call[0].content.startswith("You decide")]
 
 
+def _batch_classifier_calls(handler: FakeHandler) -> list[list[Message]]:
+    return [
+        call
+        for call in _classifier_calls(handler)
+        if call[0].content.startswith("You decide whether each pull request")
+    ]
+
+
+def _solo_classifier_calls(handler: FakeHandler) -> list[list[Message]]:
+    return [
+        call
+        for call in _classifier_calls(handler)
+        if call[0].content.startswith("You decide whether one pull request")
+    ]
+
+
 def _evaluator_calls(handler: FakeHandler) -> list[list[Message]]:
     return [call for call in handler.calls if call[0].content.startswith("You review")]
+
+
+def _batch_classification(entries: list[tuple[str, bool, str]]) -> str:
+    results: list[dict[str, object]] = []
+    for pr_id, security, rationale in entries:
+        if security:
+            item: dict[str, object] = {
+                "pr_id": pr_id,
+                "has_security_discussion": True,
+                "evidence": [{"quote": "authentication bypass", "location": "description"}],
+                "rationale": rationale,
+            }
+        else:
+            item = {
+                "pr_id": pr_id,
+                "has_security_discussion": False,
+                "evidence": [],
+                "rationale": rationale,
+            }
+        results.append(item)
+    return json.dumps({"results": results})
+
+
+def _batch_verdict(
+    pr_ids: list[str],
+    verdict: str = "APPROVE",
+    *,
+    failed: str | None = None,
+    feedback: str = "",
+) -> str:
+    return json.dumps(
+        {
+            "results": [
+                {
+                    "pr_id": pr_id,
+                    "verdict": verdict,
+                    "findings": _findings(failed=failed),
+                    "feedback": feedback,
+                }
+                for pr_id in pr_ids
+            ]
+        }
+    )
+
+
+def _metrics(tmp_path: Path) -> dict[str, object]:
+    return json.loads((tmp_path / "classify" / "metrics.json").read_text(encoding="utf-8"))
+
+
+def _trace(tmp_path: Path) -> list[dict[str, object]]:
+    text = (tmp_path / "classify" / "trace.jsonl").read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line]
 
 
 def _sha(messages: list[Message]) -> str:
@@ -288,13 +363,235 @@ def test_metrics_count_first_approval_and_a_decision_flip(tmp_path: Path) -> Non
 
     _run(tmp_path, handler, [_pull("1"), _pull("2")], max_iterations=2)
 
-    metrics = json.loads((tmp_path / "classify" / "metrics.json").read_text(encoding="utf-8"))
-    assert metrics == {
+    assert _metrics(tmp_path) == {
         "approval_rate_iteration_1": 0.5,
         "approval_rate_final": 1.0,
         "mean_iterations": 1.5,
         "decision_flips": 1,
+        "llm_calls": 6,
+        "calls_per_pr": 3.0,
+        "tokens_per_pr": {"input": 9.0, "output": 15.0},
+        "single_pr_retries": 0,
     }
+
+
+def test_pull_progress_is_the_place_in_the_set(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            _classification(False, "one"),
+            _verdict("APPROVE"),
+            _classification(False, "two"),
+            _verdict("APPROVE"),
+        ]
+    )
+
+    _output, events = _run(tmp_path, handler, [_pull("1"), _pull("2")])
+
+    assert [event for event in events if isinstance(event, ClassifyProgress)] == [
+        ClassifyProgress(kind="pull", index=1, total=2),
+        ClassifyProgress(kind="pull", index=2, total=2),
+    ]
+
+
+def test_batch_progress_counts_each_group(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            _batch_classification([("1", False, "a"), ("2", False, "b")]),
+            _batch_verdict(["1", "2"]),
+            _classification(False, "c"),
+            _verdict("APPROVE"),
+        ]
+    )
+
+    _output, events = _run(
+        tmp_path, handler, [_pull("1"), _pull("2"), _pull("3")], batch_size=2
+    )
+
+    assert [event for event in events if isinstance(event, ClassifyProgress)] == [
+        ClassifyProgress(kind="batch", index=1, total=2),
+        ClassifyProgress(kind="batch", index=2, total=2),
+    ]
+
+
+def test_batch_size_limits_classifier_calls_on_the_first_iteration(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            _batch_classification([("1", False, "a"), ("2", False, "b")]),
+            _batch_verdict(["1", "2"]),
+            _classification(False, "c"),
+            _verdict("APPROVE"),
+        ]
+    )
+
+    output, _events = _run(
+        tmp_path, handler, [_pull("1"), _pull("2"), _pull("3")], batch_size=2
+    )
+
+    assert len(_classifier_calls(handler)) == 2
+    assert [item["status"] for item in output] == ["approved", "approved", "approved"]
+    lines = _trace(tmp_path)
+    shared = [line for line in lines if "batch_id" in line]
+    assert [line["pr_ids"] for line in shared] == [["1", "2"], ["1", "2"]]
+    assert shared[0]["parsed"]["1"]["rationale"] == "a"
+    assert shared[0]["parsed"]["2"]["has_security_discussion"] is False
+    assert "pr_id" not in shared[0]
+    assert shared[1]["parsed"]["1"]["verdict"] == "APPROVE"
+    assert "verdict" not in shared[1]
+    assert len({line["batch_id"] for line in shared}) == 2
+    solo = [line for line in lines if line.get("pr_id") == "3"]
+    assert [line["role"] for line in solo] == ["classifier", "evaluator"]
+    assert "batch_id" not in solo[0]
+    stored = {
+        item["id"]: item["payload"]["traces"]
+        for item in (
+            json.loads(line)
+            for line in (tmp_path / "classify" / "items.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+    }
+    assert stored["1"][0]["batch_id"] == stored["2"][0]["batch_id"] == shared[0]["batch_id"]
+    metrics = _metrics(tmp_path)
+    assert metrics["llm_calls"] == 4
+    assert metrics["calls_per_pr"] == pytest.approx(4 / 3)
+    tokens = metrics["tokens_per_pr"]
+    assert tokens["input"] == 4.0
+    assert tokens["output"] == pytest.approx(20 / 3)
+    assert metrics["single_pr_retries"] == 0
+    assert metrics["approval_rate_iteration_1"] == 1.0
+    assert metrics["decision_flips"] == 0
+
+
+def test_batch_metrics_count_a_flip_and_split_shared_tokens(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            _batch_classification([("1", False, "no"), ("2", False, "no")]),
+            _batch_verdict(["1", "2"], "REVISE", failed="decision", feedback="look again"),
+            _batch_classification([("1", True, "yes"), ("2", True, "yes")]),
+            _batch_verdict(["1", "2"]),
+        ]
+    )
+
+    _run(tmp_path, handler, [_pull("1"), _pull("2")], max_iterations=2, batch_size=2)
+
+    assert _metrics(tmp_path) == {
+        "approval_rate_iteration_1": 0.0,
+        "approval_rate_final": 1.0,
+        "mean_iterations": 2.0,
+        "decision_flips": 2,
+        "llm_calls": 4,
+        "calls_per_pr": 2.0,
+        "tokens_per_pr": {"input": 6.0, "output": 10.0},
+        "single_pr_retries": 0,
+    }
+
+
+def test_missing_batch_pr_is_retried_alone(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            _batch_classification([("1", False, "kept")]),
+            _classification(True, "filled in"),
+            _batch_verdict(["1", "2"]),
+        ]
+    )
+
+    output, _events = _run(tmp_path, handler, [_pull("1"), _pull("2")], batch_size=2)
+
+    solos = _solo_classifier_calls(handler)
+    assert len(solos) == 1
+    assert '"pr_id": "2"' in solos[0][1].content
+    assert output[0]["status"] == "approved"
+    assert output[1]["status"] == "approved"
+    assert output[1]["classification"]["rationale"] == "filled in"
+    assert _metrics(tmp_path)["single_pr_retries"] == 1
+
+
+def test_invalid_batch_response_retries_each_pr_alone(tmp_path: Path) -> None:
+    handler = FakeHandler(
+        [
+            "not json",
+            "not json",
+            _classification(False, "one"),
+            _classification(False, "two"),
+            _batch_verdict(["1", "2"]),
+        ]
+    )
+
+    output, _events = _run(tmp_path, handler, [_pull("1"), _pull("2")], batch_size=2)
+
+    assert len(_batch_classifier_calls(handler)) == 2
+    assert len(_solo_classifier_calls(handler)) == 2
+    assert [item["status"] for item in output] == ["approved", "approved"]
+    metrics = _metrics(tmp_path)
+    assert metrics["single_pr_retries"] == 2
+    assert metrics["llm_calls"] == 4
+
+
+def test_resume_rebatches_only_the_unsaved_pulls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killed = {"on": True}
+    original = ClassifyStage.save_item
+
+    def wrapped(self: ClassifyStage, ctx: RunContext, item_id: str, payload: object) -> None:
+        original(self, ctx, item_id, payload)
+        if killed["on"]:
+            killed["on"] = False
+            raise RuntimeError("killed")
+
+    monkeypatch.setattr(ClassifyStage, "save_item", wrapped)
+    handler = FakeHandler(
+        [
+            _batch_classification([("1", False, "first"), ("2", False, "second")]),
+            _batch_verdict(["1", "2"]),
+            _batch_classification([("2", True, "again"), ("3", False, "third")]),
+            _batch_verdict(["2", "3"]),
+        ]
+    )
+    pulls = [pull.model_dump() for pull in (_pull("1"), _pull("2"), _pull("3"))]
+    factory = _factory(handler)
+    with pytest.raises(RuntimeError, match="killed"):
+        Orchestrator([ClassifyStage(1, factory, batch_size=2)]).run(tmp_path, data=pulls)
+    assert not (tmp_path / "classify" / "output.json").exists()
+    saved = [
+        json.loads(line)["id"]
+        for line in (tmp_path / "classify" / "items.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert saved == ["1"]
+    done = len(handler.calls)
+
+    result = Orchestrator([ClassifyStage(1, factory, batch_size=2)]).run(tmp_path, data=pulls)
+
+    resumed = _batch_classifier_calls(handler)[1:]
+    assert len(handler.calls) - done == 2
+    assert len(resumed) == 1
+    assert '"pr_id": "1"' not in resumed[0][1].content
+    assert '"pr_id": "2"' in resumed[0][1].content
+    assert '"pr_id": "3"' in resumed[0][1].content
+    assert [item["pr_id"] for item in result] == ["1", "2", "3"]
+    assert result[0]["classification"]["rationale"] == "first"
+    assert result[1]["classification"]["rationale"] == "again"
+
+
+def test_batch_max_chars_splits_before_batch_size(tmp_path: Path) -> None:
+    pulls = [_pull("1"), _pull("2"), _pull("3")]
+    limit = min(len(pull.model_dump_json(indent=2)) for pull in pulls)
+    handler = FakeHandler(
+        [
+            _classification(False, "one"),
+            _verdict("APPROVE"),
+            _classification(False, "two"),
+            _verdict("APPROVE"),
+            _classification(False, "three"),
+            _verdict("APPROVE"),
+        ]
+    )
+
+    output, _events = _run(tmp_path, handler, pulls, batch_size=4, batch_max_chars=limit)
+
+    assert len(_classifier_calls(handler)) == 3
+    assert _batch_classifier_calls(handler) == []
+    assert [item["status"] for item in output] == ["approved", "approved", "approved"]
 
 
 def test_evaluate_is_not_a_stage_name() -> None:

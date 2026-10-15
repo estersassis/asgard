@@ -167,11 +167,26 @@ def _trace_lines(ctx: RunContext) -> dict[str, list[int]]:
             raise ConfigError("classify trace is not valid json") from None
         if not isinstance(payload, dict):
             raise ConfigError("classify trace is not valid json")
-        pr_id = payload.get("pr_id")
-        if not isinstance(pr_id, str):
-            raise ConfigError("classify trace is not valid json")
-        lines.setdefault(pr_id, []).append(number)
+        for pr_id in _trace_ids(payload):
+            lines.setdefault(pr_id, []).append(number)
     return lines
+
+
+def _trace_ids(payload: dict[str, Any]) -> list[str]:
+    """Line numbers belong to every pull request that shared the call.
+
+    A line from a single-PR call has ``pr_id``. A batch call has ``pr_ids``
+    and no ``pr_id``; each id points at that same line.
+    """
+    pr_ids = payload.get("pr_ids")
+    if isinstance(pr_ids, list) and pr_ids:
+        if not all(isinstance(item, str) for item in pr_ids):
+            raise ConfigError("classify trace is not valid json")
+        return list(dict.fromkeys(pr_ids))
+    pr_id = payload.get("pr_id")
+    if not isinstance(pr_id, str):
+        raise ConfigError("classify trace is not valid json")
+    return [pr_id]
 
 
 def _pull_numbers(ctx: RunContext, pr_ids: list[str]) -> dict[str, str]:
