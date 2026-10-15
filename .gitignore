@@ -222,5 +222,5 @@ __marimo__/
 
 # Run directories and mined data
 runs/
-data/
+/data/
 tmp/
