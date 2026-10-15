@@ -13,13 +13,14 @@ The tool generalizes the manual pipeline from *Automatically Generating Security
 
 ```mermaid
 flowchart LR
-  mine --> normalize --> classify --> consolidate --> synthesize --> security_md --> bundle
+  mine --> normalize --> prefilter --> classify --> consolidate --> synthesize --> security_md --> bundle
 ```
 
 | Stage | What it writes |
 | --- | --- |
 | `mine` | One JSON file per pull request |
 | `normalize` | One record per pull request, ready for the models |
+| `prefilter` | The pull requests passed on to classification |
 | `classify` | A classifier–evaluator decision for each pull request |
 | `consolidate` | The approved security discussions |
 | `synthesize` | The user guideline |
@@ -72,7 +73,7 @@ Keep the first run small. With Ollama serving `llama3.1`:
 asgard run owner/name --max-prs 10 --provider ollama --model llama3.1
 ```
 
-`owner/name` may also be a `github.com` URL. The same command works with `--provider gemini`, `--provider openai`, or `--provider anthropic` once that provider's key is in `.env`. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, classifies, consolidates, synthesizes the guideline, writes `SECURITY.md`, and writes a run manifest. Results land in `runs/owner__name/<utc-stamp>/`. Open `runs/owner__name/<utc-stamp>/SECURITY.md`.
+`owner/name` may also be a `github.com` URL. The same command works with `--provider gemini`, `--provider openai`, or `--provider anthropic` once that provider's key is in `.env`. The command checks that the token can see the repository and that each configured model endpoint answers, then mines, normalizes, pre-filters, classifies, consolidates, synthesizes the guideline, writes `SECURITY.md`, and writes a run manifest. Results land in `runs/owner__name/<utc-stamp>/`. Open `runs/owner__name/<utc-stamp>/SECURITY.md`.
 
 The same settings can live in `asgard.toml`. Flags override the file.
 
@@ -86,7 +87,7 @@ To continue a finished prefix of that run:
 asgard run --config runs/owner__name/<utc-stamp>/config.json --from classify
 ```
 
-`--from` accepts `mine`, `normalize`, `classify`, `consolidate`, `synthesize`, `security_md`, or `bundle`. Every earlier stage must already have written its output. `--only` runs that one stage and stops, with the same requirement. The two flags cannot be combined.
+`--from` accepts `mine`, `normalize`, `prefilter`, `classify`, `consolidate`, `synthesize`, `security_md`, or `bundle`. Every earlier stage must already have written its output. `--only` runs that one stage and stops, with the same requirement. The two flags cannot be combined.
 
 Progress goes to stderr. `--quiet` hides it. `--json-logs` writes one JSON event per line to stdout, and the two can be used together. The command exits 0 when it finishes, 2 when the settings or the requested stage are invalid, and 1 when the pipeline fails for another reason.
 
@@ -132,7 +133,8 @@ The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, 
 | --- | --- |
 | `repo` | `owner/name` or a github.com URL |
 | `--config` | TOML or JSON settings file |
-| `--from` | Resume at `mine`, `normalize`, `classify`, `consolidate`, `synthesize`, `security_md`, or `bundle` |
+| `--from` | Resume at `mine`, `normalize`, `prefilter`, `classify`, `consolidate`, `synthesize`, `security_md`, or `bundle` |
+| `--prefilter` | Keep a pull request only when a security keyword appears in its text, labels, or a mined file path |
 | `--only` | Run that one stage. Earlier stages must already be done |
 | `--quiet` | Hide the progress bar |
 | `--json-logs` | Write one JSON event per line to stdout |
@@ -149,7 +151,7 @@ The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, 
 | `--evaluator-provider`, `--evaluator-model` | Evaluator override |
 | `--synthesizer-provider`, `--synthesizer-model` | Synthesizer override |
 
-`--prefilter`, `--merged-only`, and `--label` are stored on the run configuration for stages that are still ahead. Repeat `--label` to record several labels.
+`--prefilter` turns the triage on. A pull request stays when its title, description, discussion, review comments, labels, or a mined file path contains a security keyword. A pull request with none of those signals is left out of classification, and the reason is stored in `prefilter/removed.json`. With the flag off, the stage passes every normalized pull request through and writes an empty removal list. `--merged-only` and `--label` are stored on the run configuration for stages that are still ahead. Repeat `--label` to record several labels.
 
 ## Run directory
 
@@ -167,6 +169,9 @@ runs/owner__name/20260101T120000Z/
   normalize/
     output.json
     items.jsonl
+  prefilter/
+    output.json
+    removed.json
   classify/
     output.json
     items.jsonl
@@ -186,6 +191,8 @@ runs/owner__name/20260101T120000Z/
 ```
 
 `config.json` is the saved settings with secrets removed. `events.jsonl` is one progress event per line. `classifications.xlsx` appears only when `--export-xlsx` is set or when you run `asgard export` on this directory.
+
+`prefilter/output.json` is the list classification reads. `prefilter/removed.json` stores how many pull requests arrived, how many stayed, and each removed id with its reason. With `--prefilter` off, the two counts match and the removed list is empty.
 
 Consolidation does not call a model. It joins the classify summary, the normalized pull requests, and `classify/trace.jsonl`, then writes three files:
 
@@ -210,7 +217,7 @@ The last stage writes `<run>/manifest.json`, and the same document to `bundle/ou
 | `config` | Saved settings with secrets removed |
 | `prompts` | SHA-256 of each role's system prompt. The synthesizer hash is taken after `{repository}` is filled in |
 | `models` | `provider` and `model` for `classifier`, `evaluator`, and `synthesizer` |
-| `counts` | `mined`, `filtered`, `security`, `non_security`, and `unresolved` |
+| `counts` | `mined`, `filtered`, `prefilter_in`, `prefilter_out`, `security`, `non_security`, and `unresolved`. The pre-filter counts come from `prefilter/removed.json` and are null when that stage has not run |
 | `stages` | For each stage: `items`, `duration_s`, and `skipped` |
 | `tokens` | `input` and `output` totals from `classify/trace.jsonl` |
 | `cost` | Always null |

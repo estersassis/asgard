@@ -81,6 +81,10 @@ class Stage(ABC):
             done.add(item_id)
         return outputs
 
+    def item_total(self, data: Any) -> int | None:
+        """Input size for StageStarted.total. Stages that do not count return None."""
+        return None
+
     @abstractmethod
     def execute(self, ctx: RunContext, data: Any) -> Any:
         """Do the work. Skip ids already stored by process_items."""
@@ -89,7 +93,7 @@ class Stage(ABC):
         if self.is_done(ctx):
             ctx.emit(StageFinished(stage=self.name, skipped=True))
             return self.load(ctx)
-        ctx.emit(StageStarted(stage=self.name))
+        ctx.emit(StageStarted(stage=self.name, total=self.item_total(data)))
         try:
             output = self.execute(ctx, data)
         except Exception as exc:

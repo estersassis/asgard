@@ -170,6 +170,8 @@ def test_manifest_describes_every_file_and_omits_secrets(tmp_path: Path) -> None
     assert manifest["counts"] == {
         "mined": 1,
         "filtered": 1,
+        "prefilter_in": None,
+        "prefilter_out": None,
         "security": 1,
         "non_security": 0,
         "unresolved": 0,
@@ -182,9 +184,33 @@ def test_manifest_describes_every_file_and_omits_secrets(tmp_path: Path) -> None
     assert stages["mine"] == {"items": 1, "duration_s": 1.0, "skipped": True}
     assert stages["classify"] == {"items": 1, "duration_s": None, "skipped": False}
     assert stages["normalize"] == {"items": 1, "duration_s": None, "skipped": None}
+    assert stages["prefilter"] == {"items": None, "duration_s": None, "skipped": None}
     assert stages["bundle"]["items"] == 1
     assert stages["bundle"]["duration_s"] is None
     assert not (tmp_path / "bundle" / "classifications.xlsx").exists()
+
+
+def test_prefilter_counts_come_from_removed_json(tmp_path: Path) -> None:
+    _layout(tmp_path)
+    _dump(tmp_path / "prefilter" / "output.json", [{"context": {"pr_id": "1"}}])
+    _dump(
+        tmp_path / "prefilter" / "removed.json",
+        {
+            "before": 3,
+            "after": 1,
+            "removed": [{"pr_id": "2", "reason": "no security keyword, label, or sensitive path"}],
+        },
+    )
+
+    manifest = _run(tmp_path)
+
+    assert manifest["counts"]["prefilter_in"] == 3
+    assert manifest["counts"]["prefilter_out"] == 1
+    assert manifest["stages"]["prefilter"]["items"] == 1
+    files = manifest["files"]
+    assert isinstance(files, dict)
+    assert files["prefilter/output.json"] == "Pull requests kept for classification."
+    assert files["prefilter/removed.json"] == "Pre-filter counts and the removed pull requests."
 
 
 def test_export_xlsx_writes_one_row_per_classification(tmp_path: Path) -> None:

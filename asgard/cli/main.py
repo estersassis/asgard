@@ -20,6 +20,7 @@ from asgard.core.stages.classify import ClassifyStage
 from asgard.core.stages.consolidate import ConsolidateStage
 from asgard.core.stages.mine import MineStage
 from asgard.core.stages.normalize import NormalizeStage
+from asgard.core.stages.prefilter import PrefilterStage
 from asgard.core.stages.security_md import SecurityMdStage
 from asgard.core.stages.synthesize import SynthesizeStage
 from asgard.providers.factory import LLMFactory
@@ -28,6 +29,7 @@ _ROLES = ("classifier", "evaluator", "synthesizer")
 _PIPELINE = (
     "mine",
     "normalize",
+    "prefilter",
     "classify",
     "consolidate",
     "synthesize",
@@ -90,6 +92,7 @@ def _run_pipeline(
     stages = [
         MineStage(opener=opener),
         NormalizeStage(repo=config.repo),
+        PrefilterStage(),
         ClassifyStage(config.max_iterations, factory),
         ConsolidateStage(config.include_unresolved),
         SynthesizeStage(config.repo, factory),
@@ -117,7 +120,7 @@ def _parser() -> argparse.ArgumentParser:
         "run",
         help=(
             "validate settings, save them, mine pull requests, normalize them, "
-            "classify them, consolidate them, synthesize the guideline, "
+            "pre-filter them, classify them, consolidate them, synthesize the guideline, "
             "write SECURITY.md, and write a run manifest"
         ),
     )

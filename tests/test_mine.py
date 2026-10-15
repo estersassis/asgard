@@ -263,6 +263,8 @@ def test_run_mines_after_saving_config(
         "StageStarted",
         "StageFinished",
         "StageStarted",
+        "StageFinished",
+        "StageStarted",
         "ClassificationAttempt",
         "EvaluatorVerdict",
         "LoopFinished",
@@ -280,16 +282,18 @@ def test_run_mines_after_saving_config(
     assert events[1]["pr_id"] == "4"
     assert events[3]["stage"] == "normalize"
     assert events[4] == {"type": "StageFinished", "stage": "normalize", "skipped": False}
-    assert events[5]["stage"] == "classify"
-    assert events[9] == {"type": "StageFinished", "stage": "classify", "skipped": False}
-    assert events[10]["stage"] == "consolidate"
-    assert events[11] == {"type": "StageFinished", "stage": "consolidate", "skipped": False}
-    assert events[12]["stage"] == "synthesize"
-    assert events[13] == {"type": "StageFinished", "stage": "synthesize", "skipped": False}
-    assert events[14]["stage"] == "security_md"
-    assert events[15] == {"type": "StageFinished", "stage": "security_md", "skipped": False}
-    assert events[16]["stage"] == "bundle"
-    assert events[17] == {"type": "StageFinished", "stage": "bundle", "skipped": False}
+    assert events[5] == {"type": "StageStarted", "stage": "prefilter", "total": 1}
+    assert events[6] == {"type": "StageFinished", "stage": "prefilter", "skipped": False}
+    assert events[7]["stage"] == "classify"
+    assert events[11] == {"type": "StageFinished", "stage": "classify", "skipped": False}
+    assert events[12]["stage"] == "consolidate"
+    assert events[13] == {"type": "StageFinished", "stage": "consolidate", "skipped": False}
+    assert events[14]["stage"] == "synthesize"
+    assert events[15] == {"type": "StageFinished", "stage": "synthesize", "skipped": False}
+    assert events[16]["stage"] == "security_md"
+    assert events[17] == {"type": "StageFinished", "stage": "security_md", "skipped": False}
+    assert events[18]["stage"] == "bundle"
+    assert events[19] == {"type": "StageFinished", "stage": "bundle", "skipped": False}
     assert not any(event["type"] == "SynthesisChunk" for event in events)
     assert not any(event["type"] == "CitationWarning" for event in events)
     guideline = json.loads((out / "synthesize" / "output.json").read_text(encoding="utf-8"))
@@ -301,6 +305,10 @@ def test_run_mines_after_saving_config(
     manifest = json.loads((out / "security_md" / "output.json").read_text(encoding="utf-8"))
     assert manifest["unknown_citations"] == []
     assert Path(manifest["path"]) == out / "SECURITY.md"
+    kept = json.loads((out / "prefilter" / "output.json").read_text(encoding="utf-8"))
+    assert [item["context"]["pr_id"] for item in kept] == ["4"]
+    removed = json.loads((out / "prefilter" / "removed.json").read_text(encoding="utf-8"))
+    assert removed == {"before": 1, "after": 1, "removed": []}
     normalized = json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8"))
     assert normalized[0]["description"] == "change"
     assert normalized[0]["context"]["repository"] == "jpadilla/pyjwt"
@@ -328,10 +336,11 @@ def test_run_mines_after_saving_config(
     )
     assert len(seen) == calls + 1
     assert not seen[-1].endswith("/pulls/4")
-    finished = _events(out / "events.jsonl")[-7:]
+    finished = _events(out / "events.jsonl")[-8:]
     assert finished == [
         {"type": "StageFinished", "stage": "mine", "skipped": True},
         {"type": "StageFinished", "stage": "normalize", "skipped": True},
+        {"type": "StageFinished", "stage": "prefilter", "skipped": True},
         {"type": "StageFinished", "stage": "classify", "skipped": True},
         {"type": "StageFinished", "stage": "consolidate", "skipped": True},
         {"type": "StageFinished", "stage": "synthesize", "skipped": True},
