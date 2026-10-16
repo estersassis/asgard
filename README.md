@@ -127,9 +127,24 @@ model = "llama3.1"
 
 [llm.synthesizer]
 model = "llama3.1"
+
+[prompts]
+classifier = "default"
+evaluator = "default"
+synthesizer = "default"
+# registry_dir = "/optional/path"
 ```
 
 `max_iterations` is the cap on classifier–evaluator rounds for one pull request (default 3). `batch_size` is how many still-active pull requests the classifier judges in one call, and how many the evaluator judges in one call (default 1). `batch_max_chars`, when set, closes a batch before `batch_size` if the next pull request would pass that many characters. A pull request larger than the cap is sent alone. A role block inherits `provider` and `model` from `[llm.default]` when it omits them. Each role also accepts `temperature` (default `0`) and `timeout` in seconds (default `300`). The roles are `classifier`, `evaluator`, and `synthesizer`.
+
+`[prompts]` selects which system-prompt version each role uses. Omitted keys mean `default`, the built-in text from `asgard/prompts/<role>.py`. User versions live under `~/.asgard/prompts/<role>/<id>.json` (or `prompts.registry_dir` / `ASGARD_PROMPTS_DIR`). Save and list them with the CLI:
+
+```bash
+asgard prompts save --role classifier --name "Strict" --file my-prompt.txt
+asgard prompts list --role classifier
+```
+
+Point a run at a saved id in config (for example `classifier = "strict"`). The id must exist in the registry before the run starts.
 
 The miner keeps pull requests by `state` (`open`, `closed`, or `all`), `since`, `until` (`YYYY-MM-DD`), and `max_prs`. `[mining] page_size` is how many pull requests each GraphQL page requests (default 50).
 
@@ -230,7 +245,7 @@ The last stage writes `<run>/manifest.json`, and the same document to `bundle/ou
 | `version` | ASGARD package version |
 | `commit` | Git commit of this checkout, or null |
 | `config` | Saved settings with secrets removed |
-| `prompts` | SHA-256 of each role's system prompt. The synthesizer hash is taken after `{repository}` is filled in |
+| `prompts` | SHA-256 of each role's **resolved** system prompt (registry selection, or the synthesizer run-dir override when present). The synthesizer hash is taken after `{repository}` is filled in |
 | `models` | `provider` and `model` for `classifier`, `evaluator`, and `synthesizer` |
 | `counts` | `mined`, `filtered`, `prefilter_in`, `prefilter_out`, `security`, `non_security`, and `unresolved`. The pre-filter counts come from `prefilter/removed.json` and are null when that stage has not run |
 | `stages` | For each stage: `items`, `duration_s`, and `skipped` |
@@ -244,15 +259,17 @@ Durations come from the `at` timestamp on each progress event.
 
 ## Synthesis prompt
 
-The synthesis instructions are `SYSTEM_PROMPT` in [`asgard/prompts/synthesizer.py`](asgard/prompts/synthesizer.py). `{repository}` is replaced with `owner/name` before the call. The user message is the JSON in `consolidate/output.json` and is not part of that prompt.
+The synthesis instructions are the resolved synthesizer system prompt. By default that is `SYSTEM_PROMPT` in [`asgard/prompts/synthesizer.py`](asgard/prompts/synthesizer.py). `{repository}` is replaced with `owner/name` before the call. The user message is the JSON in `consolidate/output.json` and is not part of that prompt.
 
-Edit `SYSTEM_PROMPT` to change the guideline. Keep the response shape the stage reads: a `topics` list, each topic with `title` and `recommendations`, and each recommendation with `title`, `text`, and a non-empty `pr_ids` list. Every `pr_id` has to be one of the ids in the consolidated list. Then rerun synthesis and the stages after it:
+Precedence for the synthesizer body: `synthesize/system_prompt.txt` in the run directory (if present), else the version selected in `[prompts].synthesizer`, else the built-in constant. Classifier and evaluator use the registry selection, then their module constants (no run-dir override).
+
+To try a one-off synthesis edit without touching the registry, write the full prompt to `synthesize/system_prompt.txt` in the run directory. Keep the response shape the stage reads: a `topics` list, each topic with `title` and `recommendations`, and each recommendation with `title`, `text`, and a non-empty `pr_ids` list. Every `pr_id` has to be one of the ids in the consolidated list. Then rerun synthesis and the stages after it:
 
 ```bash
 asgard run --config runs/owner__name/<utc-stamp>/config.json --from synthesize
 ```
 
-The new `manifest.json` records the SHA-256 of the edited prompt under `prompts.synthesizer`. The classifier and evaluator prompts are the constants in `asgard/prompts/classifier.py` and `asgard/prompts/evaluator.py`.
+The new `manifest.json` records the SHA-256 of the active text under `prompts.synthesizer` (and likewise for classifier and evaluator). Different selected versions or a run-dir override change those hashes.
 
 ## Development
 
