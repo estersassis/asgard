@@ -214,7 +214,7 @@ class ClassifyStage(Stage):
         directory = ctx.run_dir / self.name
         body = "".join(json.dumps(line) + "\n" for line in lines)
         _replace(directory / "trace.jsonl", body)
-        _replace(directory / "metrics.json", json.dumps(_metrics(payloads)) + "\n")
+        _replace(directory / "metrics.json", json.dumps(_metrics(payloads, lines)) + "\n")
 
     def _review_group(self, ctx: RunContext, group: list[_PullReview]) -> None:
         for review in group:
@@ -775,7 +775,10 @@ def _parsed_by_pr(parsed: Any) -> Any:
     return indexed
 
 
-def _metrics(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+def _metrics(
+    payloads: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+) -> dict[str, Any]:
     total = len(payloads)
     if total == 0:
         return {
@@ -788,8 +791,8 @@ def _metrics(payloads: list[dict[str, Any]]) -> dict[str, Any]:
             "tokens_per_pr": {"input": 0.0, "output": 0.0},
             "single_pr_retries": 0,
         }
-    calls = _llm_calls(payloads)
-    incoming, outgoing = _tokens_per_pr(payloads)
+    calls = _llm_calls(lines)
+    incoming, outgoing = _tokens_per_pr(payloads, lines)
     first = sum(1 for payload in payloads if _approved_on_first(payload))
     final = sum(1 for payload in payloads if payload["status"] == "approved")
     iterations = sum(payload["iterations"] for payload in payloads)
@@ -805,8 +808,8 @@ def _metrics(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _llm_calls(payloads: list[dict[str, Any]]) -> int:
-    return sum(1 for line in _unique_trace_lines(payloads) if _is_llm_call(line))
+def _llm_calls(lines: list[dict[str, Any]]) -> int:
+    return sum(1 for line in lines if _is_llm_call(line))
 
 
 def _is_llm_call(line: dict[str, Any]) -> bool:
@@ -814,7 +817,10 @@ def _is_llm_call(line: dict[str, Any]) -> bool:
     return line.get("error") is not None or line.get("raw_response") is not None
 
 
-def _tokens_per_pr(payloads: list[dict[str, Any]]) -> tuple[float, float]:
+def _tokens_per_pr(
+    payloads: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+) -> tuple[float, float]:
     """Average input and output tokens. A shared call is split across its ids."""
     total = len(payloads)
     if total == 0:
@@ -822,7 +828,7 @@ def _tokens_per_pr(payloads: list[dict[str, Any]]) -> tuple[float, float]:
     known = {payload["pr_id"] for payload in payloads}
     incoming = {pr_id: 0.0 for pr_id in known}
     outgoing = {pr_id: 0.0 for pr_id in known}
-    for line in _unique_trace_lines(payloads):
+    for line in lines:
         if not _is_llm_call(line):
             continue
         owners = _owners(line)
