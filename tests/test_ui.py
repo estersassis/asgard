@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import threading
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ from asgard.core.config import load_run
 from asgard.core.events import ClassificationAttempt, Error
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.stage import CancelledError, RunContext, Stage
+from asgard.prompts.synthesizer import SYSTEM_PROMPT
 from asgard.providers.handlers.fake import FakeHandler
 from asgard.ui.app import create_app
 from asgard.ui.sink import UISink
@@ -411,6 +414,58 @@ def test_council_page_assets() -> None:
     assert '"hide"' in js.text or "hide" in js.text
 
 
+def test_guideline_page_assets() -> None:
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+
+    page = client.get("/guideline")
+    assert page.status_code == 200
+    assert "ASGARD" in page.text
+    assert "IV</span>Guideline" in page.text
+    assert "/static/css/guideline.css" in page.text
+    assert "/static/js/guideline.js" in page.text
+    assert 'id="guideline"' in page.text
+    assert 'data-run="' in page.text
+    assert 'id="guideline-label"' in page.text
+    assert 'id="guideline-edit"' in page.text
+    assert 'id="guideline-bundle"' in page.text
+    assert 'id="guideline-download"' in page.text
+    assert 'id="guideline-prompt"' in page.text
+    assert 'id="guideline-regenerate"' in page.text
+    assert 'id="guideline-preview"' in page.text
+    assert 'class="ms"' in page.text
+    assert "SECURITY.md" in page.text
+    assert "Edit prompt" in page.text
+    assert "Regenerate" in page.text
+    assert 'data-theme="light"' not in page.text
+    assert not _TOKEN_HEX.search(page.text)
+
+    with_run = client.get("/guideline?run=abc123")
+    assert with_run.status_code == 200
+    assert 'data-run="abc123"' in with_run.text
+
+    light = client.get("/guideline?theme=light")
+    assert light.status_code == 200
+    assert 'data-theme="light"' in light.text
+
+    css = client.get("/static/css/guideline.css")
+    assert css.status_code == 200
+    assert "760px" in css.text
+    assert ".ms" in css.text
+    assert ".cite" in css.text
+    assert "var(--ember)" in css.text or "var(--panel)" in css.text
+
+    js = client.get("/static/js/guideline.js")
+    assert js.status_code == 200
+    assert "/SECURITY.md" in js.text
+    assert "/consolidate/output" in js.text
+    assert "/security_md/output" in js.text
+    assert "/synthesize/prompt" in js.text
+    assert "/regenerate" in js.text
+    assert "/bundle.zip" in js.text
+    assert "unknown_citations" in js.text
+
+
 def test_pipeline_log_config_and_removed_endpoints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -546,6 +601,203 @@ def test_council_file_endpoints(
     assert isinstance(api_output.json(), list)
     assert api_output.json()
     assert {"pr_id", "status", "classification"} <= set(api_output.json()[0])
+
+
+def test_guideline_file_endpoints_and_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numbers = _numbers()
+    security = numbers[0]
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    out = tmp_path / "out"
+    source = _settings(tmp_path, out)
+    app = create_app(
+        opener=_opener(numbers),
+        handlers={"fake": _handler(security)},
+        dotenv=None,
+    )
+    client = TestClient(app)
+
+    missing = client.get("/api/runs/missing/SECURITY.md")
+    assert missing.status_code == 404
+
+    response = client.post("/api/runs", json={"config": str(source)})
+    assert response.status_code == 200, response.text
+    run_id = response.json()["id"]
+    status = _wait_done(client, run_id)
+    assert status["error"] is None
+
+    disk_md = (out / "SECURITY.md").read_text(encoding="utf-8")
+    api_md = client.get(f"/api/runs/{run_id}/SECURITY.md")
+    assert api_md.status_code == 200
+    assert "text/markdown" in api_md.headers.get("content-type", "")
+    assert api_md.text == disk_md
+    disposition = api_md.headers.get("content-disposition", "")
+    assert "SECURITY.md" in disposition
+
+    disk_consolidate = json.loads(
+        (out / "consolidate" / "output.json").read_text(encoding="utf-8")
+    )
+    api_consolidate = client.get(f"/api/runs/{run_id}/consolidate/output")
+    assert api_consolidate.status_code == 200
+    assert api_consolidate.json() == disk_consolidate
+
+    disk_security_md = json.loads(
+        (out / "security_md" / "output.json").read_text(encoding="utf-8")
+    )
+    api_security_md = client.get(f"/api/runs/{run_id}/security_md/output")
+    assert api_security_md.status_code == 200
+    assert api_security_md.json() == disk_security_md
+    assert "unknown_citations" in api_security_md.json()
+
+    prompt_get = client.get(f"/api/runs/{run_id}/synthesize/prompt")
+    assert prompt_get.status_code == 200
+    assert "text/plain" in prompt_get.headers.get("content-type", "")
+    assert prompt_get.text == SYSTEM_PROMPT
+    assert not (out / "synthesize" / "system_prompt.txt").exists()
+
+    override = "Custom guideline for {repository}."
+    put = client.put(
+        f"/api/runs/{run_id}/synthesize/prompt",
+        json={"text": override},
+    )
+    assert put.status_code == 200, put.text
+    assert put.json()["path"] == "synthesize/system_prompt.txt"
+    saved = out / "synthesize" / "system_prompt.txt"
+    assert saved.is_file()
+    assert saved.read_text(encoding="utf-8") == override
+    prompt_again = client.get(f"/api/runs/{run_id}/synthesize/prompt")
+    assert prompt_again.status_code == 200
+    assert prompt_again.text == override
+
+    bundle = client.get(f"/api/runs/{run_id}/bundle.zip")
+    assert bundle.status_code == 200
+    assert bundle.headers.get("content-type") == "application/zip"
+    assert "bundle.zip" in bundle.headers.get("content-disposition", "")
+    with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+        names = set(archive.namelist())
+    assert "SECURITY.md" in names
+    assert "manifest.json" in names
+
+    traversal = client.get(f"/api/runs/{run_id}/mine/prs/../SECURITY.md")
+    assert traversal.status_code == 404
+    traversal_dot = client.get(f"/api/runs/{run_id}/mine/prs/..")
+    assert traversal_dot.status_code == 404
+
+
+def _synthesis(security: int, *, title: str = "Authentication") -> str:
+    return json.dumps(
+        {
+            "topics": [
+                {
+                    "title": title,
+                    "recommendations": [
+                        {
+                            "title": "Keep the algorithm allow-list a sequence",
+                            "text": "Reject a bare string so the allow-list cannot be bypassed.",
+                            "pr_ids": [str(security)],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+
+def test_guideline_regenerate_skips_classify(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numbers = _numbers()
+    security = numbers[0]
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    out = tmp_path / "out"
+    source = _settings(tmp_path, out)
+    approved = json.dumps(
+        {
+            "has_security_discussion": True,
+            "evidence": [{"quote": _QUOTE, "location": "description"}],
+            "rationale": "the description discusses authentication",
+        }
+    )
+    rejected = json.dumps(
+        {
+            "has_security_discussion": False,
+            "evidence": [],
+            "rationale": "documentation only",
+        }
+    )
+    verdict = json.dumps({"verdict": "APPROVE", "findings": _findings(), "feedback": ""})
+    handler = FakeHandler(
+        [
+            approved,
+            verdict,
+            rejected,
+            verdict,
+            _synthesis(security, title="Authentication"),
+            _synthesis(security, title="Regenerated auth"),
+        ]
+    )
+    app = create_app(
+        opener=_opener(numbers),
+        handlers={"fake": handler},
+        dotenv=None,
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/runs", json={"config": str(source)})
+    assert response.status_code == 200, response.text
+    run_id = response.json()["id"]
+    status = _wait_done(client, run_id)
+    assert status["error"] is None
+    calls_before = len(handler.calls)
+    assert calls_before == 5
+    events_before = len(_events(out / "events.jsonl"))
+    md_before = (out / "SECURITY.md").read_text(encoding="utf-8")
+    assert "Authentication" in md_before
+
+    override = "Regenerate {repository} with a fresh prompt."
+    put = client.put(
+        f"/api/runs/{run_id}/synthesize/prompt",
+        json={"text": override},
+    )
+    assert put.status_code == 200, put.text
+
+    regenerated = client.post(
+        f"/api/runs/{run_id}/regenerate",
+        json={"from": "synthesize", "prompt": override},
+    )
+    assert regenerated.status_code == 200, regenerated.text
+    status = _wait_done(client, run_id)
+    assert status["error"] is None
+
+    new_events = _events(out / "events.jsonl")[events_before:]
+    started = [
+        event["stage"]
+        for event in new_events
+        if event.get("type") == "StageStarted"
+    ]
+    assert "classify" not in started
+    assert "synthesize" in started
+    assert "security_md" in started
+    assert "bundle" in started
+    assert {
+        "type": "StageFinished",
+        "stage": "synthesize",
+        "skipped": False,
+    } in new_events
+
+    new_calls = handler.calls[calls_before:]
+    assert len(new_calls) == 1
+    assert new_calls[0][0].content == override.format(repository="jpadilla/pyjwt")
+
+    disk_md = (out / "SECURITY.md").read_text(encoding="utf-8")
+    assert "Regenerated auth" in disk_md
+    api_md = client.get(f"/api/runs/{run_id}/SECURITY.md")
+    assert api_md.status_code == 200
+    assert api_md.text == disk_md
+    assert (out / "synthesize" / "system_prompt.txt").read_text(encoding="utf-8") == override
 
 
 def test_stop_and_resume_from_stage(
