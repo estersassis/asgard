@@ -114,9 +114,19 @@ def fetch_pull(
     pull = _get_json(repo, token, f"pulls/{number}", open_url, transport)
     if not isinstance(pull, dict):
         raise ConfigError("github pull was not an object")
-    issue_comments = _fetch_list(repo, token, f"issues/{number}/comments", open_url, transport)
+    # pulls/{n} already reports comments and review_comments. Skip those list
+    # calls when the count is zero. reviews has no counter, so it always runs.
+    issue_comments: list[dict[str, Any]] = []
+    if not _empty_count(pull.get("comments")):
+        issue_comments = _fetch_list(
+            repo, token, f"issues/{number}/comments", open_url, transport
+        )
     reviews = _fetch_list(repo, token, f"pulls/{number}/reviews", open_url, transport)
-    review_comments = _fetch_list(repo, token, f"pulls/{number}/comments", open_url, transport)
+    review_comments: list[dict[str, Any]] = []
+    if not _empty_count(pull.get("review_comments")):
+        review_comments = _fetch_list(
+            repo, token, f"pulls/{number}/comments", open_url, transport
+        )
     return {
         **pull,
         "issue_comments": issue_comments,
@@ -343,6 +353,11 @@ def _created_on(pr: dict[str, Any]) -> date | None:
     if not isinstance(raw, str) or len(raw) < 10:
         return None
     return date.fromisoformat(raw[:10])
+
+
+def _empty_count(value: Any) -> bool:
+    """True only for an explicit integer zero. Missing counts still fetch."""
+    return isinstance(value, int) and not isinstance(value, bool) and value == 0
 
 
 def _github_error(exc: urllib.error.HTTPError, token: str | None) -> str:

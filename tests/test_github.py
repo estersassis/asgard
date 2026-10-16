@@ -117,7 +117,14 @@ def test_fetch_pull_joins_discussion_and_keeps_deleted_users() -> None:
         assert request.get_header("Authorization") == f"Bearer {TOKEN}"
         assert request.get_header("Accept") == "application/vnd.github+json"
         if url.endswith("/pulls/7"):
-            body = {"number": 7, "title": "fix", "body": "the change", "user": None}
+            body = {
+                "number": 7,
+                "title": "fix",
+                "body": "the change",
+                "user": None,
+                "comments": 1,
+                "review_comments": 101,
+            }
             return _Response(json.dumps(body).encode())
         if "/issues/7/comments" in url:
             return _Response(json.dumps([{"id": 9, "body": "lgtm", "user": None}]).encode())
@@ -146,6 +153,33 @@ def test_fetch_pull_joins_discussion_and_keeps_deleted_users() -> None:
     assert "/pulls/7/comments?per_page=100&page=1" in seen[3]
     assert "/pulls/7/comments?per_page=100&page=2" in seen[4]
     assert len(seen) == 5
+
+
+def test_fetch_pull_skips_empty_comment_lists() -> None:
+    seen: list[str] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        url = request.full_url
+        seen.append(url)
+        if url.endswith("/pulls/7"):
+            body = {
+                "number": 7,
+                "body": "quiet",
+                "comments": 0,
+                "review_comments": 0,
+            }
+            return _Response(json.dumps(body).encode())
+        if "/pulls/7/reviews" in url:
+            return _Response(b"[]")
+        raise AssertionError(url)
+
+    pull = fetch_pull("jpadilla/pyjwt", 7, TOKEN, opener=opener)
+    assert pull["issue_comments"] == []
+    assert pull["reviews"] == []
+    assert pull["threads"] == []
+    assert len(seen) == 2
+    assert seen[0].endswith("/pulls/7")
+    assert "/pulls/7/reviews?per_page=100&page=1" in seen[1]
 
 
 def test_cache_skips_fetch_until_updated_at_changes(tmp_path: Path) -> None:
