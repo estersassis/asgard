@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
 
+from asgard.core.prompt_registry import PromptRegistry, default_registry_root
 from asgard.providers.models import LLMSettings, RoleSpec, credentials_from_env
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
@@ -80,12 +81,28 @@ class MiningSettings(BaseModel):
         return value
 
 
+class PromptSelection(BaseModel):
+    classifier: str = "default"
+    evaluator: str = "default"
+    synthesizer: str = "default"
+    registry_dir: Path | None = None
+
+    @field_validator("classifier", "evaluator", "synthesizer")
+    @classmethod
+    def _prompt_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("prompt id must not be empty")
+        return value
+
+
 class RunConfig(BaseModel):
     repo: str
     github_token: SecretStr = Field(exclude=True)
     llm: LLMSettings
     filters: Filters = Field(default_factory=Filters)
     mining: MiningSettings = Field(default_factory=MiningSettings)
+    prompts: PromptSelection = Field(default_factory=PromptSelection)
     max_iterations: int = 3
     batch_size: int = 1
     batch_max_chars: int | None = None
@@ -236,6 +253,7 @@ def prepare_run(
     with _secret_env(secrets, restore=False):
         config, credentials = _load_run(config_path, overrides)
         validate_run(config, credentials, opener=opener)
+        _validate_prompt_selection(config)
     target = config.output_dir / "config.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(config.redacted_dump(), indent=2) + "\n", encoding="utf-8")
@@ -252,6 +270,17 @@ def validate_run(config: RunConfig, credentials: Any, *, opener: Any = None) -> 
             continue
         seen.append(spec)
         _check_provider(spec, credentials, open_url, secrets)
+
+
+def _validate_prompt_selection(config: RunConfig) -> None:
+    root = config.prompts.registry_dir or default_registry_root()
+    registry = PromptRegistry(root)
+    for role in _ROLES:
+        version_id = getattr(config.prompts, role)
+        try:
+            registry.get(role, version_id)
+        except LookupError as exc:
+            raise ConfigError(str(exc)) from None
 
 
 def probe_run(config: RunConfig, credentials: Any, *, opener: Any = None) -> dict[str, Any]:
@@ -308,6 +337,20 @@ def dump_toml(data: dict[str, Any]) -> str:
             if value is None:
                 continue
             lines.append(f"{key} = {_toml_value(value)}")
+
+    prompts = payload.get("prompts")
+    if isinstance(prompts, dict) and prompts:
+        trimmed = {
+            key: value
+            for key, value in prompts.items()
+            if value is not None and not (key in _ROLES and value == "default")
+        }
+        if trimmed:
+            if lines:
+                lines.append("")
+            lines.append("[prompts]")
+            for key, value in trimmed.items():
+                lines.append(f"{key} = {_toml_value(value)}")
 
     llm = payload.get("llm")
     if isinstance(llm, dict):

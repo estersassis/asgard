@@ -291,3 +291,30 @@ def test_mine_set_and_malformed_input_raise(tmp_path: Path) -> None:
     broken = _record("1", "approved", classification={"has_security_discussion": "yes"})
     with pytest.raises(ConfigError, match="requires classified pull requests"):
         _run(tmp_path, [broken])
+
+
+def test_prefilter_kept_set_is_the_classify_coverage_target(tmp_path: Path) -> None:
+    _prepare(tmp_path, [1, 2, 3])
+    kept = [
+        {"context": {"repository": "acme/app", "pr_id": "1", "title": "One"}},
+        {"context": {"repository": "acme/app", "pr_id": "2", "title": "Two"}},
+    ]
+    prefilter = tmp_path / "prefilter"
+    prefilter.mkdir()
+    (prefilter / "output.json").write_text(json.dumps(kept), encoding="utf-8")
+
+    result = _run(
+        tmp_path,
+        [
+            _record("1", "approved", classification=_classification(True, "one")),
+            _record("2", "approved", classification=_classification(False, "two")),
+        ],
+    )
+    assert [item["pr_id"] for item in result] == ["1"]
+
+    (tmp_path / "consolidate" / "output.json").unlink()
+    with pytest.raises(ConfigError, match="do not match the mined set"):
+        _run(
+            tmp_path,
+            [_record("1", "approved", classification=_classification(True, "one"))],
+        )

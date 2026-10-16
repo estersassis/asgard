@@ -10,6 +10,7 @@ import pytest
 from openpyxl import load_workbook
 
 from asgard.core.config import ConfigError, load_run
+from asgard.core.prompt_registry import PromptRegistry
 from asgard.core.stage import RunContext
 from asgard.core.stages.bundle import BundleStage
 from asgard.prompts.classifier import SYSTEM_PROMPT as CLASSIFIER_PROMPT
@@ -141,6 +142,35 @@ def test_synthesizer_prompt_hash_uses_override_file(tmp_path: Path) -> None:
     assert manifest["prompts"]["synthesizer"] != _sha(
         SYNTHESIZER_PROMPT.format(repository="acme/app")
     )
+
+
+def test_different_classifier_versions_produce_different_manifest_hashes(
+    tmp_path: Path,
+) -> None:
+    registry = PromptRegistry(tmp_path / "prompts")
+    first = registry.save("classifier", name="alpha", body="classifier version alpha\n")
+    second = registry.save("classifier", name="beta", body="classifier version beta\n")
+
+    run_a = tmp_path / "run-a"
+    run_b = tmp_path / "run-b"
+    _layout(run_a)
+    _layout(run_b)
+    for run_dir, version_id in ((run_a, first.id), (run_b, second.id)):
+        config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+        config["prompts"] = {
+            "classifier": version_id,
+            "registry_dir": str(registry.root),
+        }
+        _dump(run_dir / "config.json", config)
+
+    hash_a = _run(run_a)["prompts"]["classifier"]
+    hash_b = _run(run_b)["prompts"]["classifier"]
+
+    assert hash_a == _sha("classifier version alpha\n")
+    assert hash_b == _sha("classifier version beta\n")
+    assert hash_a != hash_b
+    assert hash_a != _sha(CLASSIFIER_PROMPT)
+    assert hash_b != _sha(CLASSIFIER_PROMPT)
 
 
 def test_manifest_describes_every_file_and_omits_secrets(tmp_path: Path) -> None:

@@ -81,9 +81,15 @@ def classify(
     emit: Callable[[Event], None],
     previous: str | None = None,
     feedback: str | None = None,
+    system_prompt: str | None = None,
 ) -> Classification:
     """Classify one pull request. Emit an attempt only after a valid result."""
-    messages = build_messages(pull, previous=previous, feedback=feedback)
+    messages = build_messages(
+        pull,
+        previous=previous,
+        feedback=feedback,
+        system_prompt=system_prompt,
+    )
     response = factory.generate("classifier", messages, schema=Classification)
     result = response.parsed
     if not isinstance(result, Classification):

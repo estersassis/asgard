@@ -56,11 +56,13 @@ def build_messages(
     pull: NormalizedPullRequest,
     previous: str | None = None,
     feedback: str | None = None,
+    system_prompt: str | None = None,
 ) -> list[Message]:
     """Return the system prompt and one user message for this pull request.
 
     ``previous`` and ``feedback`` are included together on a later attempt.
     ``feedback`` is opaque evaluator text.
+    ``system_prompt`` overrides ``SYSTEM_PROMPT`` when set.
     """
     if (previous is None) != (feedback is None):
         raise ValueError("previous and feedback must both be set or both be omitted")
@@ -72,8 +74,9 @@ def build_messages(
             f"Previous response:\n{previous}\n\n"
             f"Evaluator feedback:\n{feedback}"
         )
+    prompt = SYSTEM_PROMPT if system_prompt is None else system_prompt
     return [
-        Message(role="system", content=SYSTEM_PROMPT),
+        Message(role="system", content=prompt),
         Message(role="user", content=content),
     ]
 

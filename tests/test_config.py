@@ -138,6 +138,83 @@ def test_mining_page_size_from_file(
     assert config.redacted_dump()["mining"] == {"page_size": 25}
 
 
+def test_prompts_selection_from_toml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asgard.core.prompt_registry import PromptRegistry
+
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    registry_dir = tmp_path / "prompt-store"
+    saved = PromptRegistry(registry_dir).save(
+        "classifier",
+        name="strict",
+        body="custom classifier\n",
+    )
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "owner/name"',
+                f'output_dir = "{tmp_path / "out"}"',
+                "",
+                "[prompts]",
+                f'classifier = "{saved.id}"',
+                f'registry_dir = "{registry_dir}"',
+                "",
+                "[llm.default]",
+                'provider = "fake"',
+                'model = "fake"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config, _ = load_run(source)
+    assert config.prompts.classifier == saved.id
+    assert config.prompts.evaluator == "default"
+    assert config.prompts.synthesizer == "default"
+    assert config.prompts.registry_dir == registry_dir
+
+    prepared = prepare_run({}, source, dotenv=None, opener=_ok)
+    assert prepared.prompts.classifier == saved.id
+    dumped = prepared.redacted_dump()["prompts"]
+    assert dumped["classifier"] == saved.id
+    assert dumped["registry_dir"] == str(registry_dir)
+
+
+def test_prepare_run_rejects_unknown_prompt_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    registry_dir = tmp_path / "empty-prompts"
+    registry_dir.mkdir()
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "owner/name"',
+                f'output_dir = "{tmp_path / "out"}"',
+                "",
+                "[prompts]",
+                'classifier = "does-not-exist"',
+                f'registry_dir = "{registry_dir}"',
+                "",
+                "[llm.default]",
+                'provider = "fake"',
+                'model = "fake"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="unknown classifier prompt"):
+        prepare_run({}, source, dotenv=None, opener=_ok)
+
+
 def test_saved_config_reloads_without_secrets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -624,6 +701,12 @@ def test_dump_toml_roundtrips_without_secrets(
         "keys": {"openai": KEY},
         "filters": {"state": "closed", "max_prs": 10, "since": "2024-01-01"},
         "mining": {"page_size": 25},
+        "prompts": {
+            "classifier": "strict",
+            "evaluator": "default",
+            "synthesizer": "default",
+            "registry_dir": str(tmp_path / "prompts"),
+        },
         "llm": {
             "default": {
                 "provider": "ollama",
@@ -646,6 +729,9 @@ def test_dump_toml_roundtrips_without_secrets(
     assert "[llm.synthesizer]" not in text
     assert "[llm.evaluator]" in text
     assert 'provider = "openai"' in text
+    assert "[prompts]" in text
+    assert 'classifier = "strict"' in text
+    assert "evaluator" not in text.split("[prompts]", 1)[1].split("[", 1)[0]
 
     target = tmp_path / "asgard.toml"
     target.write_text(text, encoding="utf-8")
@@ -655,6 +741,9 @@ def test_dump_toml_roundtrips_without_secrets(
     assert config.filters.max_prs == 10
     assert config.mining.page_size == 25
     assert config.prefilter is True
+    assert config.prompts.classifier == "strict"
+    assert config.prompts.evaluator == "default"
+    assert config.prompts.registry_dir == tmp_path / "prompts"
     assert config.llm.default.provider == "ollama"
     assert config.llm.evaluator is not None
     assert config.llm.evaluator.provider == "openai"
