@@ -6,9 +6,10 @@ import re
 import tomllib
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import quote
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
@@ -19,6 +20,24 @@ _ROLES = ("classifier", "evaluator", "synthesizer")
 _REPO = re.compile(r"[^/\s]+/[^/\s]+")
 _GITHUB = re.compile(
     r"(?:https?://)?(?:www\.)?github\.com/([^/\s]+)/([^/\s]+?)(?:\.git)?/?$"
+)
+_SECRET_ENV = (
+    "GITHUB_TOKEN",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OLLAMA_HOST",
+)
+_TOP_LEVEL = (
+    "repo",
+    "max_iterations",
+    "batch_size",
+    "batch_max_chars",
+    "prefilter",
+    "include_unresolved",
+    "export_xlsx",
+    "output_dir",
+    "security_md",
 )
 
 
@@ -122,31 +141,85 @@ def load_dotenv(path: Path = Path(".env")) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 
+@contextmanager
+def _secret_env(secrets: dict[str, str] | None, *, restore: bool = True) -> Iterator[None]:
+    """Apply overlay env vars. Prefer overlay over existing env / file keys."""
+    if not secrets:
+        yield
+        return
+    previous: dict[str, str | None] = {}
+    for key, value in secrets.items():
+        if key not in _SECRET_ENV or value is None or value == "":
+            continue
+        previous[key] = os.environ.get(key)
+        os.environ[key] = str(value)
+    try:
+        yield
+    finally:
+        if not restore:
+            return
+        for key, old in previous.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+
+def _peel_secrets(
+    overrides: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str | None, dict[str, str] | None]:
+    peeled = dict(overrides or {})
+    token = peeled.pop("github_token", None)
+    keys = peeled.pop("keys", None)
+    if token is not None:
+        token = str(token)
+    if keys is not None and not isinstance(keys, dict):
+        raise ConfigError("keys must be a table")
+    if isinstance(keys, dict):
+        keys = {str(name): str(value) for name, value in keys.items()}
+    return peeled, token, keys
+
+
 def load_run(
     path: Path | None = None,
     overrides: dict[str, Any] | None = None,
+    secrets: dict[str, str] | None = None,
+) -> tuple[RunConfig, Any]:
+    with _secret_env(secrets):
+        return _load_run(path, overrides)
+
+
+def _load_run(
+    path: Path | None,
+    overrides: dict[str, Any] | None,
 ) -> tuple[RunConfig, Any]:
     data: dict[str, Any] = _read(path) if path is not None else {}
     file_keys = data.pop("keys", None)
     file_token = data.pop("github_token", None)
-    merged = _merge(data, overrides or {})
+    peeled, override_token, override_keys = _peel_secrets(overrides)
+    merged = _merge(data, peeled)
     if "output_dir" not in merged and "/" in str(merged.get("repo", "")):
         owner, name = str(merged["repo"]).split("/", 1)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         merged["output_dir"] = str(Path("runs") / f"{owner}__{name}" / stamp)
     if isinstance(merged.get("llm"), dict):
         merged["llm"] = _fill_roles(merged["llm"])
-    token = os.environ.get("GITHUB_TOKEN") or file_token
+    token = os.environ.get("GITHUB_TOKEN") or override_token or file_token
     if not token:
         raise ConfigError("missing GITHUB_TOKEN")
     merged["github_token"] = token
-    file_secrets = [str(item) for item in file_keys.values()] if isinstance(file_keys, dict) else []
-    secrets = [token, *file_secrets]
+    key_table: dict[str, str] = {}
+    if isinstance(file_keys, dict):
+        key_table.update({str(k): str(v) for k, v in file_keys.items()})
+    if override_keys:
+        key_table.update(override_keys)
+    file_secrets = list(key_table.values())
+    redact_list = [token, *file_secrets]
     try:
         config = RunConfig.model_validate(merged)
     except ValidationError as exc:
-        raise ConfigError(_redact(_validation_message(exc), secrets)) from None
-    return config, credentials_from_env(file_keys if isinstance(file_keys, dict) else None)
+        raise ConfigError(_redact(_validation_message(exc), redact_list)) from None
+    return config, credentials_from_env(key_table or None)
 
 
 def prepare_run(
@@ -155,11 +228,14 @@ def prepare_run(
     *,
     dotenv: Path | None = Path(".env"),
     opener: Any = None,
+    secrets: dict[str, str] | None = None,
 ) -> RunConfig:
     if dotenv is not None:
         load_dotenv(dotenv)
-    config, credentials = load_run(config_path, overrides)
-    validate_run(config, credentials, opener=opener)
+    # Keep overlay env for this process so the pipeline/provider factory sees keys / OLLAMA_HOST.
+    with _secret_env(secrets, restore=False):
+        config, credentials = _load_run(config_path, overrides)
+        validate_run(config, credentials, opener=opener)
     target = config.output_dir / "config.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(config.redacted_dump(), indent=2) + "\n", encoding="utf-8")
@@ -176,6 +252,139 @@ def validate_run(config: RunConfig, credentials: Any, *, opener: Any = None) -> 
             continue
         seen.append(spec)
         _check_provider(spec, credentials, open_url, secrets)
+
+
+def probe_run(config: RunConfig, credentials: Any, *, opener: Any = None) -> dict[str, Any]:
+    """Collect per-target reachability results instead of fail-fast."""
+    open_url = opener or urllib.request.urlopen
+    secrets = _secret_values(config, credentials)
+    results: dict[str, Any] = {}
+    try:
+        _check_github(config, open_url, secrets)
+        results["github"] = {"ok": True, "message": ""}
+    except ConfigError as exc:
+        results["github"] = {"ok": False, "message": str(exc)}
+    seen: list[RoleSpec] = []
+    for spec in _specs(config):
+        if spec.provider == "fake" or spec in seen:
+            continue
+        seen.append(spec)
+        try:
+            _check_provider(spec, credentials, open_url, secrets)
+            results[spec.provider] = {"ok": True, "message": ""}
+        except ConfigError as exc:
+            results[spec.provider] = {"ok": False, "message": str(exc)}
+    return results
+
+
+def dump_toml(data: dict[str, Any]) -> str:
+    """Serialize a RunConfig-shaped dict to TOML. Never writes secrets."""
+    payload = dict(data)
+    payload.pop("github_token", None)
+    payload.pop("keys", None)
+    lines: list[str] = []
+
+    for key in _TOP_LEVEL:
+        if key not in payload or payload[key] is None:
+            continue
+        lines.append(f"{key} = {_toml_value(payload[key])}")
+
+    filters = payload.get("filters")
+    if isinstance(filters, dict) and filters:
+        if lines:
+            lines.append("")
+        lines.append("[filters]")
+        for key, value in filters.items():
+            if value is None:
+                continue
+            lines.append(f"{key} = {_toml_value(value)}")
+
+    mining = payload.get("mining")
+    if isinstance(mining, dict) and mining:
+        if lines:
+            lines.append("")
+        lines.append("[mining]")
+        for key, value in mining.items():
+            if value is None:
+                continue
+            lines.append(f"{key} = {_toml_value(value)}")
+
+    llm = payload.get("llm")
+    if isinstance(llm, dict):
+        default = llm.get("default")
+        if isinstance(default, dict) and default:
+            if lines:
+                lines.append("")
+            lines.append("[llm.default]")
+            for key, value in default.items():
+                if value is None:
+                    continue
+                lines.append(f"{key} = {_toml_value(value)}")
+        else:
+            default = {}
+        for role in _ROLES:
+            spec = llm.get(role)
+            if not isinstance(spec, dict) or not spec:
+                continue
+            if str(spec.get("provider", "")) == "default":
+                continue
+            trimmed = _role_for_dump(spec, default if isinstance(default, dict) else {})
+            if not trimmed:
+                continue
+            if lines:
+                lines.append("")
+            lines.append(f"[llm.{role}]")
+            for key, value in trimmed.items():
+                lines.append(f"{key} = {_toml_value(value)}")
+
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _role_for_dump(spec: dict[str, Any], default: dict[str, Any]) -> dict[str, Any]:
+    """Omit a role that fully matches default so inheritance matches `_fill_roles`."""
+    out: dict[str, Any] = {}
+    for key, value in spec.items():
+        if value is None:
+            continue
+        if key in default and value == default[key]:
+            continue
+        out[key] = value
+    if not out:
+        return {}
+    # Still identical to default after fill → omit entirely.
+    provider = out.get("provider", default.get("provider"))
+    model = out.get("model", default.get("model"))
+    temperature = out.get("temperature", default.get("temperature", 0))
+    timeout = out.get("timeout", default.get("timeout", 300))
+    if (
+        provider == default.get("provider")
+        and model == default.get("model")
+        and temperature == default.get("temperature", 0)
+        and timeout == default.get("timeout", 300)
+        and set(out) <= {"provider", "model", "temperature", "timeout"}
+    ):
+        return {}
+    return out
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, datetime):
+        return _toml_value(value.date().isoformat())
+    if isinstance(value, date):
+        return _toml_value(value.isoformat())
+    if isinstance(value, Path):
+        return _toml_value(str(value))
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    text = str(value)
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _specs(config: RunConfig) -> list[RoleSpec]:
@@ -213,7 +422,11 @@ def _check_provider(spec: RoleSpec, credentials: Any, opener: Any, secrets: list
     if spec.provider == "ollama":
         host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
         request = urllib.request.Request(f"{host}/api/tags", headers={"User-Agent": "asgard"})
-    elif spec.provider == "openai":
+        with _open(opener, request, secrets, spec.provider) as response:
+            body = response.read() if hasattr(response, "read") else b"{}"
+            _require_ollama_model(body, spec.model)
+        return
+    if spec.provider == "openai":
         request = urllib.request.Request(
             f"https://api.openai.com/v1/models/{model}",
             headers={
@@ -239,6 +452,32 @@ def _check_provider(spec: RoleSpec, credentials: Any, opener: Any, secrets: list
         raise ConfigError(f"unknown provider: {spec.provider}")
     with _open(opener, request, secrets, spec.provider):
         return
+
+
+def _require_ollama_model(body: bytes, model: str) -> None:
+    try:
+        payload = json.loads(body.decode() if isinstance(body, bytes) else body or "{}")
+    except (TypeError, ValueError, UnicodeDecodeError):
+        payload = {}
+    names: set[str] = set()
+    for item in payload.get("models", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or item.get("model")
+        if name:
+            names.add(str(name))
+    if _ollama_has_model(names, model):
+        return
+    raise ConfigError(f"ollama model is not pulled: {model}")
+
+
+def _ollama_has_model(names: set[str], model: str) -> bool:
+    if model in names:
+        return True
+    if ":" not in model and f"{model}:latest" in names:
+        return True
+    base = model.split(":", 1)[0]
+    return any(name == model or name.split(":", 1)[0] == base for name in names)
 
 
 def _key(credentials: Any, provider: str) -> str:

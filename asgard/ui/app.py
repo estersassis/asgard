@@ -4,26 +4,56 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
+import tomllib
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from asgard.core.config import (
+    ConfigError,
+    dump_toml,
+    load_dotenv,
+    load_run,
+    probe_run,
+)
 from asgard.core.pipeline import PIPELINE
 from asgard.ui.session import SessionStore
 
 _UI_ROOT = Path(__file__).resolve().parent
+_ENV_PREFILL = (
+    "GITHUB_TOKEN",
+    "OLLAMA_HOST",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+)
 
 
 class StartRunBody(BaseModel):
     config: Path | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
+    secrets: dict[str, str] = Field(default_factory=dict)
+
+
+class SetupValidateBody(BaseModel):
+    overrides: dict[str, Any] = Field(default_factory=dict)
+    secrets: dict[str, str] = Field(default_factory=dict)
+
+
+class SetupTomlBody(BaseModel):
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class SetupParseBody(BaseModel):
+    text: str
 
 
 class ResumeRunBody(BaseModel):
@@ -80,6 +110,56 @@ def create_app(
     async def forge(request: Request) -> HTMLResponse:
         return _screen(request, "forge", "V", "Forge")
 
+    @app.get("/api/setup/env")
+    async def setup_env() -> dict[str, str]:
+        if store.dotenv is not None:
+            load_dotenv(store.dotenv)
+        values: dict[str, str] = {}
+        for key in _ENV_PREFILL:
+            raw = os.environ.get(key)
+            if raw:
+                values[key] = raw
+        values.setdefault("OLLAMA_HOST", "http://localhost:11434")
+        return values
+
+    @app.post("/api/setup/validate")
+    async def setup_validate(body: SetupValidateBody) -> dict[str, Any]:
+        try:
+            config, credentials = load_run(
+                overrides=body.overrides or None,
+                secrets=body.secrets or None,
+            )
+            return probe_run(config, credentials, opener=store.opener)
+        except ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/setup/toml")
+    async def setup_toml(body: SetupTomlBody) -> PlainTextResponse:
+        data = dict(body.overrides or {})
+        leaked = [key for key in ("github_token", "keys") if key in data]
+        text = dump_toml(data)
+        if leaked or "github_token" in text or "[keys]" in text:
+            raise HTTPException(status_code=400, detail="secrets must not be saved to asgard.toml")
+        return PlainTextResponse(text, media_type="text/toml")
+
+    @app.post("/api/setup/parse")
+    async def setup_parse(body: SetupParseBody) -> dict[str, Any]:
+        raw = body.text.strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="empty settings")
+        try:
+            if raw.startswith("{"):
+                data = json.loads(raw)
+            else:
+                data = tomllib.loads(raw)
+        except (json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+            raise HTTPException(status_code=400, detail=f"invalid settings: {exc}") from exc
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="settings must be a table")
+        data.pop("github_token", None)
+        data.pop("keys", None)
+        return data
+
     @app.post("/api/runs")
     async def start_run(body: StartRunBody) -> dict[str, str]:
         session = store.create()
@@ -87,6 +167,7 @@ def create_app(
             output_dir = session.start(
                 config_path=body.config,
                 overrides=body.overrides or None,
+                secrets=body.secrets or None,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

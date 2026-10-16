@@ -10,11 +10,21 @@ from pathlib import Path
 import pytest
 
 from asgard.cli.main import main
-from asgard.core.config import ConfigError, load_dotenv, load_run, prepare_run
+from asgard.core.config import (
+    ConfigError,
+    dump_toml,
+    load_dotenv,
+    load_run,
+    prepare_run,
+    probe_run,
+)
 from asgard.providers.handlers.fake import FakeHandler
 
 TOKEN = "ghp_test_token"
 KEY = "sk-test-key"
+_OLLAMA_TAGS = json.dumps(
+    {"models": [{"name": "llama3.1:latest"}, {"name": "llama-eval:latest"}]}
+).encode()
 
 
 class _Response:
@@ -41,6 +51,8 @@ def _http_error(url: str, code: int, body: bytes = b"") -> urllib.error.HTTPErro
 
 
 def _ok(request: urllib.request.Request, timeout: int = 10) -> _Response:
+    if "/api/tags" in request.full_url:
+        return _Response(body=_OLLAMA_TAGS)
     return _Response()
 
 
@@ -196,6 +208,8 @@ def test_cli_run_config_matches_saved_file(tmp_path: Path, monkeypatch: pytest.M
                     }
                 ).encode()
             )
+        if "/api/tags" in request.full_url:
+            return _Response(body=_OLLAMA_TAGS)
         return _Response()
 
     monkeypatch.setattr("asgard.core.config.urllib.request.urlopen", opener)
@@ -455,3 +469,186 @@ def test_dotenv_does_not_override_the_environment(
     load_dotenv(env)
     assert os.environ["GITHUB_TOKEN"] == TOKEN
     assert os.environ["OPENAI_API_KEY"] == KEY
+
+
+def test_secrets_overlay_prefers_form_over_env_and_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "env-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-openai")
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "owner/name"',
+                f'github_token = "{TOKEN}-file"',
+                f'output_dir = "{tmp_path / "run"}"',
+                "",
+                "[llm.default]",
+                'provider = "openai"',
+                'model = "gpt-4o-mini"',
+                "",
+                "[keys]",
+                'openai = "file-openai"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    overlay = {
+        "GITHUB_TOKEN": "overlay-token",
+        "OPENAI_API_KEY": "overlay-openai",
+    }
+    config, credentials = load_run(source, secrets=overlay)
+    assert config.github_token.get_secret_value() == "overlay-token"
+    assert credentials.key_for("openai") == "overlay-openai"
+    assert os.environ["GITHUB_TOKEN"] == "env-token"
+    assert os.environ["OPENAI_API_KEY"] == "env-openai"
+
+    prepare_run({}, source, dotenv=None, opener=_ok, secrets=overlay)
+    saved = (tmp_path / "run" / "config.json").read_text(encoding="utf-8")
+    assert "overlay-token" not in saved
+    assert "overlay-openai" not in saved
+    assert "github_token" not in json.loads(saved)
+    # prepare_run keeps overlay env for the process (pipeline / provider factory).
+    assert os.environ["GITHUB_TOKEN"] == "overlay-token"
+    assert os.environ["OPENAI_API_KEY"] == "overlay-openai"
+
+
+def test_overrides_peel_github_token_and_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "owner/name"',
+                f'output_dir = "{tmp_path}"',
+                "",
+                "[llm.default]",
+                'provider = "openai"',
+                'model = "gpt-4o-mini"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config, credentials = load_run(
+        source,
+        {
+            "github_token": TOKEN,
+            "keys": {"openai": KEY},
+            "max_iterations": 5,
+        },
+    )
+    assert config.github_token.get_secret_value() == TOKEN
+    assert config.max_iterations == 5
+    assert credentials.key_for("openai") == KEY
+    assert "github_token" not in config.redacted_dump()
+
+
+def test_probe_run_collects_github_and_provider_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    monkeypatch.setenv("OPENAI_API_KEY", KEY)
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "owner/name"',
+                f'output_dir = "{tmp_path}"',
+                "",
+                "[llm.default]",
+                'provider = "openai"',
+                'model = "gpt-4o-mini"',
+                "",
+                "[llm.evaluator]",
+                'provider = "ollama"',
+                'model = "llama3.1"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config, credentials = load_run(source)
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        url = request.full_url
+        if "api.github.com" in url:
+            raise _http_error(url, 404)
+        if "api.openai.com" in url:
+            raise _http_error(url, 401, body=f"bad {KEY}".encode())
+        if "/api/tags" in url:
+            return _Response(body=_OLLAMA_TAGS)
+        return _Response()
+
+    results = probe_run(config, credentials, opener=opener)
+    assert results["github"]["ok"] is False
+    assert "repository not found" in results["github"]["message"]
+    assert results["openai"]["ok"] is False
+    assert KEY not in results["openai"]["message"]
+    assert results["ollama"]["ok"] is True
+    assert results["ollama"]["message"] == ""
+
+
+def test_ollama_requires_pulled_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    path = _settings(tmp_path)
+
+    def missing(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        if "/api/tags" in request.full_url:
+            return _Response(body=json.dumps({"models": [{"name": "other:latest"}]}).encode())
+        return _Response()
+
+    with pytest.raises(ConfigError, match="ollama model is not pulled"):
+        prepare_run({}, path, dotenv=None, opener=missing)
+
+
+def test_dump_toml_roundtrips_without_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    data = {
+        "repo": "owner/name",
+        "max_iterations": 3,
+        "batch_size": 1,
+        "prefilter": True,
+        "github_token": TOKEN,
+        "keys": {"openai": KEY},
+        "filters": {"state": "closed", "max_prs": 10, "since": "2024-01-01"},
+        "mining": {"page_size": 25},
+        "llm": {
+            "default": {"provider": "ollama", "model": "llama3.1", "temperature": 0, "timeout": 300},
+            "classifier": {"provider": "ollama", "model": "llama3.1"},
+            "evaluator": {"provider": "openai", "model": "gpt-4o-mini"},
+            "synthesizer": {"provider": "default"},
+        },
+    }
+    text = dump_toml(data)
+    assert TOKEN not in text
+    assert KEY not in text
+    assert "github_token" not in text
+    assert "[keys]" not in text
+    assert "output_dir" not in text
+    assert "[llm.classifier]" not in text
+    assert "[llm.synthesizer]" not in text
+    assert "[llm.evaluator]" in text
+    assert 'provider = "openai"' in text
+
+    target = tmp_path / "asgard.toml"
+    target.write_text(text, encoding="utf-8")
+    config, _ = load_run(target, {"output_dir": str(tmp_path / "out")})
+    assert config.repo == "owner/name"
+    assert config.filters.state == "closed"
+    assert config.filters.max_prs == 10
+    assert config.mining.page_size == 25
+    assert config.prefilter is True
+    assert config.llm.default.provider == "ollama"
+    assert config.llm.evaluator is not None
+    assert config.llm.evaluator.provider == "openai"
+    assert config.llm.classifier is None or config.llm.classifier.model == "llama3.1"
