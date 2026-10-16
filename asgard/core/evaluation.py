@@ -105,12 +105,13 @@ def evaluate(
     factory: LLMFactory,
     *,
     emit: Callable[[Event], None],
+    system_prompt: str | None = None,
 ) -> Evaluation:
     """Review one classification. Emit a verdict only after a result exists."""
     checked = deterministic_review(pull, classification, emit=emit)
     if checked is not None:
         return checked
-    messages = build_messages(pull, classification)
+    messages = build_messages(pull, classification, system_prompt=system_prompt)
     response = factory.generate("evaluator", messages, schema=Evaluation)
     result = response.parsed
     if not isinstance(result, Evaluation):

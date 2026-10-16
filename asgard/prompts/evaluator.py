@@ -40,10 +40,12 @@ When the verdict is APPROVE, feedback is an empty string.
 def build_messages(
     pull: NormalizedPullRequest,
     classification: Classification,
+    system_prompt: str | None = None,
 ) -> list[Message]:
     """Return the system prompt and one user message for this review.
 
     The user message contains the pull request JSON and the classification JSON.
+    ``system_prompt`` overrides ``SYSTEM_PROMPT`` when set.
     """
     content = (
         "Pull request:\n"
@@ -51,8 +53,9 @@ def build_messages(
         "Classification:\n"
         f"{classification.model_dump_json(indent=2)}"
     )
+    prompt = SYSTEM_PROMPT if system_prompt is None else system_prompt
     return [
-        Message(role="system", content=SYSTEM_PROMPT),
+        Message(role="system", content=prompt),
         Message(role="user", content=content),
     ]
 

@@ -11,10 +11,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from asgard.core.config import ConfigError
+from asgard.core.prompt_registry import resolve_system_prompt
 from asgard.core.stage import RunContext, Stage
-from asgard.prompts.classifier import SYSTEM_PROMPT as CLASSIFIER_PROMPT
-from asgard.prompts.evaluator import SYSTEM_PROMPT as EVALUATOR_PROMPT
-from asgard.prompts.synthesizer import SYSTEM_PROMPT as SYNTHESIZER_PROMPT
 from asgard.providers.models import LLMSettings
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
@@ -108,17 +106,22 @@ def _config(ctx: RunContext) -> dict[str, Any] | None:
 
 
 def _prompts(config: dict[str, Any] | None, run_dir: Path) -> dict[str, str | None]:
-    repo = config.get("repo") if config else None
+    try:
+        classifier = _sha(resolve_system_prompt("classifier", config, run_dir))
+        evaluator = _sha(resolve_system_prompt("evaluator", config, run_dir))
+    except LookupError as exc:
+        raise ConfigError(str(exc)) from None
     synthesizer = None
+    repo = config.get("repo") if config else None
     if isinstance(repo, str) and repo:
-        prompt = SYNTHESIZER_PROMPT
-        override = run_dir / "synthesize" / "system_prompt.txt"
-        if override.is_file():
-            prompt = override.read_text(encoding="utf-8")
+        try:
+            prompt = resolve_system_prompt("synthesizer", config, run_dir)
+        except LookupError as exc:
+            raise ConfigError(str(exc)) from None
         synthesizer = _sha(prompt.format(repository=repo))
     return {
-        "classifier": _sha(CLASSIFIER_PROMPT),
-        "evaluator": _sha(EVALUATOR_PROMPT),
+        "classifier": classifier,
+        "evaluator": evaluator,
         "synthesizer": synthesizer,
     }
 

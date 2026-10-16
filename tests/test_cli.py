@@ -503,6 +503,45 @@ def _normalized(pr_id: str) -> dict[str, object]:
     }
 
 
+def test_prompts_list_and_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = tmp_path / "prompts"
+    monkeypatch.setenv("ASGARD_PROMPTS_DIR", str(registry))
+    body = tmp_path / "strict.txt"
+    body.write_text("classify carefully\n", encoding="utf-8")
+
+    main(["prompts", "save", "--role", "classifier", "--name", "Strict", "--file", str(body)])
+    saved = capsys.readouterr().out.strip().split("\t")
+    assert saved[0] == "strict"
+    assert len(saved[1]) == 64
+
+    main(["prompts", "list", "--role", "classifier"])
+    lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert lines[0].startswith("classifier\tdefault\t")
+    assert any(line.startswith("classifier\tstrict\t") for line in lines)
+
+    main(["prompts", "list"])
+    all_roles = {line.split("\t")[0] for line in capsys.readouterr().out.splitlines() if line}
+    assert all_roles == {"classifier", "evaluator", "synthesizer"}
+
+
+def test_prompts_save_rejects_empty_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ASGARD_PROMPTS_DIR", str(tmp_path / "prompts"))
+    body = tmp_path / "body.txt"
+    body.write_text("x\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        main(["prompts", "save", "--role", "evaluator", "--name", "  ", "--file", str(body)])
+    assert caught.value.code == 2
+    assert "empty" in capsys.readouterr().err
+
+
 def test_logs_follow_prints_a_line_appended_after_the_first_read(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     path.write_text(

@@ -1,11 +1,13 @@
 """Turn consolidated security discussions into the User Guideline."""
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from asgard.core.config import ConfigError
 from asgard.core.events import SynthesisChunk
+from asgard.core.prompt_registry import resolve_system_prompt
 from asgard.core.stage import RunContext, Stage
 from asgard.prompts.synthesizer import build_messages
 from asgard.providers.factory import LLMFactory
@@ -16,6 +18,8 @@ _FIELDS = ("pr_id", "title", "link", "evidence", "rationale")
 _EMPTY = "There was no security discussion, so there is no guideline."
 _OUTSIDE = "synthesis cites a pull request outside the input"
 _INVALID = "synthesis response is invalid"
+_MIN_RECS = 30
+_SPARSE_INPUT = 40
 
 
 class Recommendation(BaseModel):
@@ -73,32 +77,37 @@ class SynthesizeStage(Stage):
         if not records:
             return _EMPTY
         allowed = {record["pr_id"] for record in records}
-        messages = build_messages(self.repo, records, system_prompt=_override(ctx))
+        try:
+            prompt = resolve_system_prompt("synthesizer", _run_config(ctx), ctx.run_dir)
+        except LookupError as exc:
+            raise ConfigError(str(exc)) from None
+        messages = build_messages(self.repo, records, system_prompt=prompt)
         response = self.factory.generate("synthesizer", messages, schema=Synthesis)
         ctx.emit(SynthesisChunk(text=response.text))
         guideline = _guideline(response.parsed)
-        if _outside(guideline, allowed):
-            note = _correction(response.text, guideline, allowed)
-            try:
-                response = self.factory.generate(
-                    "synthesizer",
-                    [*messages, Message(role="user", content=note)],
-                    schema=Synthesis,
-                )
-            except (ValidationError, ValueError):
-                raise ConfigError(_INVALID) from None
-            ctx.emit(SynthesisChunk(text=response.text))
-            guideline = _guideline(response.parsed)
-            if _outside(guideline, allowed):
-                raise ConfigError(_OUTSIDE)
+        guideline = _repair(
+            self.factory,
+            ctx,
+            messages,
+            response.text,
+            guideline,
+            allowed,
+            n_records=len(records),
+        )
         return _markdown(self.repo, guideline)
 
 
-def _override(ctx: RunContext) -> str | None:
-    path = ctx.run_dir / "synthesize" / "system_prompt.txt"
+def _run_config(ctx: RunContext) -> dict[str, Any] | None:
+    path = ctx.run_dir / "config.json"
     if not path.is_file():
         return None
-    return path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise ConfigError("run configuration is invalid") from None
+    if not isinstance(data, dict):
+        raise ConfigError("run configuration is invalid")
+    return data
 
 
 def _records(data: Any) -> list[dict[str, Any]]:
@@ -155,13 +164,91 @@ def _outside(guideline: Synthesis, allowed: set[str]) -> set[str]:
     return cited - allowed
 
 
-def _correction(text: str, guideline: Synthesis, allowed: set[str]) -> str:
+def _rec_count(guideline: Synthesis) -> int:
+    return sum(len(topic.recommendations) for topic in guideline.topics)
+
+
+def _target_count(n_records: int) -> int | None:
+    if n_records >= _SPARSE_INPUT:
+        return _MIN_RECS
+    return None
+
+
+def _repair(
+    factory: LLMFactory,
+    ctx: RunContext,
+    messages: list[Message],
+    text: str,
+    guideline: Synthesis,
+    allowed: set[str],
+    *,
+    n_records: int,
+) -> Synthesis:
+    """Ask the model once for citation fixes and once if the guideline is too sparse."""
+    target = _target_count(n_records)
+    if _outside(guideline, allowed):
+        text, guideline = _retry(
+            factory, ctx, messages, _citation_note(text, guideline, allowed)
+        )
+        if _outside(guideline, allowed):
+            raise ConfigError(_OUTSIDE)
+    if target is not None and _rec_count(guideline) < target:
+        text, guideline = _retry(
+            factory,
+            ctx,
+            messages,
+            _sparse_note(text, _rec_count(guideline), target, n_records),
+        )
+        if _outside(guideline, allowed):
+            text, guideline = _retry(
+                factory, ctx, messages, _citation_note(text, guideline, allowed)
+            )
+            if _outside(guideline, allowed):
+                raise ConfigError(_OUTSIDE)
+        if _rec_count(guideline) < target:
+            raise ConfigError(
+                f"synthesis returned {_rec_count(guideline)} recommendations; "
+                f"need at least {target} when the input has {n_records} security pull requests"
+            )
+    return guideline
+
+
+def _retry(
+    factory: LLMFactory,
+    ctx: RunContext,
+    messages: list[Message],
+    note: str,
+) -> tuple[str, Synthesis]:
+    try:
+        response = factory.generate(
+            "synthesizer",
+            [*messages, Message(role="user", content=note)],
+            schema=Synthesis,
+        )
+    except (ValidationError, ValueError):
+        raise ConfigError(_INVALID) from None
+    ctx.emit(SynthesisChunk(text=response.text))
+    return response.text, _guideline(response.parsed)
+
+
+def _citation_note(text: str, guideline: Synthesis, allowed: set[str]) -> str:
     known = ", ".join("#" + pr_id for pr_id in sorted(allowed, key=_order))
     rejected = ", ".join("#" + pr_id for pr_id in sorted(_outside(guideline, allowed), key=_order))
     return (
         "Cite only pull requests from the input. "
         f"Allowed ids: {known}. "
         f"These ids are not in the input: {rejected}. "
+        "Reply with JSON only, matching the requested schema.\n\n"
+        f"{text}"
+    )
+
+
+def _sparse_note(text: str, count: int, target: int, n_records: int) -> str:
+    return (
+        f"You returned only {count} recommendations, but the input has {n_records} "
+        f"security pull requests. Expand to at least {target} fine-grained "
+        "recommendations: split bundled controls and add uncovered "
+        "project-specific patterns from the evidence. Do not invent PRs. "
         "Reply with JSON only, matching the requested schema.\n\n"
         f"{text}"
     )
