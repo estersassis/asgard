@@ -6,6 +6,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..500&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
   <link rel="stylesheet" href="{{ url_for('static', path='css/tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', path='css/shell.css') }}">
+  {% block head %}{% endblock %}
 </head>
 <body>
   <div class="ag"{% if theme == 'light' %} data-theme="light"{% endif %}>
@@ -28,9 +29,10 @@
         <a class="nav{% if screen == 'forge' %} on{% endif %}" href="{{ url_for('forge') }}"{% if screen == 'forge' %} aria-current="page"{% endif %}><span class="n">V</span>Forge</a>
       </nav>
     </header>
-    <main class="page">
+    <main class="page{% block page_class %}{% endblock %}">
       {% block content %}{% endblock %}
     </main>
   </div>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -42,6 +42,7 @@ class RunSession:
         *,
         config_path: Path | None = None,
         overrides: dict[str, Any] | None = None,
+        secrets: dict[str, str] | None = None,
         start: str | None = None,
     ) -> Path:
         with self._lock:
@@ -55,6 +56,7 @@ class RunSession:
                 config_path,
                 dotenv=self.dotenv,
                 opener=self.opener,
+                secrets=secrets,
             )
             self.output_dir = config.output_dir
             self._running = True

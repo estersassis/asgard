@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}ASGARD · Setup{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', path='css/setup.css') }}">
+{% endblock %}
+{% block page_class %} setup-page{% endblock %}
+{% block content %}
+  <div class="setup-hero">
+    <div class="setup-glow" aria-hidden="true"></div>
+    <svg class="setup-gate" width="96" height="88" viewBox="0 0 100 92" aria-hidden="true">
+      <defs>
+        <linearGradient id="setupGate" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="var(--ember-hi)"></stop>
+          <stop offset="1" stop-color="var(--ember)"></stop>
+        </linearGradient>
+      </defs>
+      <rect x="15" y="40" width="13" height="49" rx="1" fill="url(#setupGate)"></rect>
+      <rect x="72" y="40" width="13" height="49" rx="1" fill="url(#setupGate)"></rect>
+      <path d="M17 41 L36 20 L50 11 L64 20 L83 41" fill="none" stroke="url(#setupGate)" stroke-width="11" stroke-linejoin="round" stroke-linecap="round"></path>
+      <polygon points="50,3 41,14 50,25" fill="var(--no)"></polygon>
+      <polygon points="50,3 59,14 50,25" fill="var(--yes)"></polygon>
+    </svg>
+    <h1 class="serif setup-title">Open the gate to <em>any</em> repository.</h1>
+    <p class="setup-lead">A SECURITY.md written from its pull request discussions, every line backed by evidence.</p>
+  </div>
+
+  <form class="setup-form" id="setup-form" aria-label="Run setup" autocomplete="off">
+    <label class="f">
+      <span class="lbl">Repository</span>
+      <input class="inp" name="repo" id="repo" type="text" placeholder="owner/repo" required>
+      <span class="hint" id="hint-repo" hidden></span>
+    </label>
+
+    <label class="f">
+      <span class="lbl">GitHub token</span>
+      <input class="inp" name="github_token" id="github_token" type="password" autocomplete="off">
+      <span class="hint" id="hint-github"></span>
+    </label>
+
+    <div class="setup-grid-2">
+      <label class="f">
+        <span class="lbl">Provider</span>
+        <select class="inp" name="provider" id="provider">
+          <option value="ollama">Ollama (local, free)</option>
+          <option value="gemini">Gemini</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
+      </label>
+      <label class="f">
+        <span class="lbl">Model</span>
+        <input class="inp" name="model" id="model" type="text" value="llama3.1">
+      </label>
+    </div>
+
+    <div id="credentials" class="setup-creds"></div>
+
+    <button type="button" class="link" id="more-toggle" aria-expanded="false" aria-controls="more-options">+ More options</button>
+
+    <div id="more-options" class="setup-more" hidden>
+      <div class="setup-grid-2">
+        <label class="f">
+          <span class="lbl">Max PRs</span>
+          <input class="inp" name="max_prs" id="max_prs" type="number" min="1" placeholder="all">
+        </label>
+        <label class="f">
+          <span class="lbl">State</span>
+          <select class="inp" name="state" id="state">
+            <option value="all">all</option>
+            <option value="open">open</option>
+            <option value="closed">closed</option>
+          </select>
+        </label>
+        <label class="f">
+          <span class="lbl">Since</span>
+          <input class="inp" name="since" id="since" type="date">
+        </label>
+        <label class="f">
+          <span class="lbl">Until</span>
+          <input class="inp" name="until" id="until" type="date">
+        </label>
+        <label class="f">
+          <span class="lbl">Max iterations</span>
+          <input class="inp" name="max_iterations" id="max_iterations" type="number" min="1" value="3">
+        </label>
+        <label class="f">
+          <span class="lbl">Batch size</span>
+          <input class="inp" name="batch_size" id="batch_size" type="number" min="1" value="1">
+        </label>
+        <label class="f">
+          <span class="lbl">Pre-filter</span>
+          <select class="inp" name="prefilter" id="prefilter">
+            <option value="off">off</option>
+            <option value="on">on</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="setup-roles">
+        <span class="lbl">Provider and model per role · default inherits above</span>
+        <div class="setup-grid-3">
+          <div class="setup-role" data-role="classifier">
+            <span class="lbl role-classifier">Classifier</span>
+            <label class="f">
+              <span class="lbl">Provider</span>
+              <select class="inp role-provider" data-role="classifier">
+                <option value="default">default</option>
+                <option value="ollama">Ollama</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+            </label>
+            <label class="f">
+              <span class="lbl">Model</span>
+              <input class="inp role-model" data-role="classifier" type="text" placeholder="default">
+            </label>
+          </div>
+          <div class="setup-role" data-role="evaluator">
+            <span class="lbl role-evaluator">Evaluator</span>
+            <label class="f">
+              <span class="lbl">Provider</span>
+              <select class="inp role-provider" data-role="evaluator">
+                <option value="default">default</option>
+                <option value="ollama">Ollama</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+            </label>
+            <label class="f">
+              <span class="lbl">Model</span>
+              <input class="inp role-model" data-role="evaluator" type="text" placeholder="default">
+            </label>
+          </div>
+          <div class="setup-role" data-role="synthesizer">
+            <span class="lbl role-synthesizer">Synthesizer</span>
+            <label class="f">
+              <span class="lbl">Provider</span>
+              <select class="inp role-provider" data-role="synthesizer">
+                <option value="default">default</option>
+                <option value="ollama">Ollama</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+            </label>
+            <label class="f">
+              <span class="lbl">Model</span>
+              <input class="inp role-model" data-role="synthesizer" type="text" placeholder="default">
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="setup-actions">
+      <button type="submit" class="btn pri" id="start-run">Start run</button>
+      <div class="setup-io">
+        <button type="button" class="link" id="load-toml">Load asgard.toml</button>
+        <span class="setup-dot" aria-hidden="true">·</span>
+        <button type="button" class="link" id="save-toml">Save asgard.toml</button>
+      </div>
+      <span class="setup-cli">Same config runs with <code>asgard run --config asgard.toml</code></span>
+      <input type="file" id="toml-file" accept=".toml,.json,text/plain" hidden>
+      <p class="hint setup-error" id="form-error" hidden></p>
+    </div>
+  </form>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', path='js/setup.js') }}" defer></script>
+{% endblock %}
