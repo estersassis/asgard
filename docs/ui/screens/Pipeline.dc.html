@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ASGARD · Pipeline</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..500&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#191B1F}
+.ag{--stone:#191B1F;--panel:#202327;--well:#141619;--ink:#E8E6D9;--ink-soft:#8D9082;--line:#2C2F2A;--ember:#D68C42;--ember-hi:#F0AC63;--bifrost:#6FA8C7;--yes:#6FB981;--no:#D97862;--on-ember:#1A1408}
+.ag[data-theme="light"]{--stone:#E3E1D4;--panel:#EDEBDE;--well:#D9D7C8;--ink:#23261F;--ink-soft:#55584C;--line:#C6C4B2;--ember:#A8652A;--ember-hi:#8C551E;--bifrost:#3C6E8C;--yes:#3F7A50;--no:#A8432F;--on-ember:#FFF8EE}
+.ag{background:var(--stone);color:var(--ink);font-family:'JetBrains Mono',Consolas,monospace;font-size:14px;line-height:1.6;min-height:100vh}
+.ag *{box-sizing:border-box}
+.serif{font-family:'Fraunces',Georgia,serif}
+.lbl{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
+.nav{display:flex;align-items:center;gap:8px;padding:0 12px;min-height:44px;color:var(--ink-soft);text-decoration:none;font-size:13px;border-bottom:1px solid transparent}
+.nav:hover{color:var(--ink)}
+.nav .n{font-family:'Fraunces',Georgia,serif;color:var(--ember)}
+.nav.on{color:var(--ink);border-bottom-color:var(--ember)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:48px;padding:0 24px;border-radius:999px;font:inherit;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);text-decoration:none}
+.btn.pri{background:var(--ember);border-color:var(--ember);color:var(--on-ember);font-weight:600}
+.link{background:none;border:0;color:var(--ink-soft);font:inherit;font-size:13px;cursor:pointer;min-height:44px;padding:0}
+.link:hover{color:var(--ink)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.live{animation:pulse 1.6s ease-in-out infinite}
+a{color:var(--ember)}
+</style>
+</helmet>
+<div class="ag" data-theme="{{theme}}">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; padding: 20px 48px">
+  <a href="Setup.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink)">
+    <svg width="26" height="24" viewBox="0 0 100 92" aria-hidden="true"><rect x="15" y="40" width="13" height="49" rx="1" fill="#C47C38"></rect><rect x="72" y="40" width="13" height="49" rx="1" fill="#C47C38"></rect><path d="M17 41 L36 20 L50 11 L64 20 L83 41" fill="none" stroke="#C47C38" stroke-width="11" stroke-linejoin="round" stroke-linecap="round"></path><polygon points="50,3 41,14 50,25" fill="#D97862"></polygon><polygon points="50,3 59,14 50,25" fill="#6FB981"></polygon></svg>
+    <span class="serif" style="font-weight: 700; font-size: 18px; letter-spacing: 0.14em">ASGARD</span>
+  </a>
+  <nav aria-label="Screens" style="display: flex; flex-wrap: wrap">
+    <a class="nav" href="Setup.dc.html"><span class="n">I</span>Setup</a>
+    <a class="nav on" href="Pipeline.dc.html" aria-current="page"><span class="n">II</span>Pipeline</a>
+    <a class="nav" href="Council.dc.html"><span class="n">III</span>Council</a>
+    <a class="nav" href="Guideline.dc.html"><span class="n">IV</span>Guideline</a>
+    <a class="nav" href="Forge.dc.html"><span class="n">V</span>Forge</a>
+  </nav>
+</header>
+
+<main style="max-width: 640px; margin: 0 auto; padding: 56px 24px 96px; display: flex; flex-direction: column; gap: 40px">
+
+  <div style="display: flex; flex-direction: column; gap: 6px">
+    <span class="lbl" style="color: {{headColor}}">{{headLabel}}</span>
+    <h1 class="serif" style="margin: 0; font-weight: 300; font-size: 44px; line-height: 1.1">jpadilla/<em style="color: var(--ember)">pyjwt</em></h1>
+  </div>
+
+  <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+    <sc-for list="{{stages}}" as="s" hint-placeholder-count="8">
+      <li style="display: flex; flex-direction: column; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--line)">
+        <div style="display: flex; align-items: baseline; gap: 16px">
+          <span class="serif" style="width: 40px; font-size: 18px; color: {{s.numColor}}">{{s.num}}</span>
+          <span style="flex: 1; color: {{s.nameColor}}">{{s.name}}</span>
+          <span style="font-size: 13px; color: {{s.stColor}}">{{s.detail}}</span>
+        </div>
+        <sc-if value="{{s.hasNote}}" hint-placeholder-val="{{ false }}">
+          <span style="margin-left: 56px; font-size: 12.5px; color: {{s.noteColor}}">{{s.note}}</span>
+        </sc-if>
+        <sc-if value="{{s.showBar}}" hint-placeholder-val="{{ false }}">
+          <div style="margin-left: 56px; height: 2px; background: var(--line)"><div style="width: 83%; height: 100%; background: var(--ember)"></div></div>
+        </sc-if>
+      </li>
+    </sc-for>
+  </ol>
+
+  <sc-if value="{{hasError}}" hint-placeholder-val="{{ true }}">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px">
+      <span style="color: var(--no)">1 error · #1172 provider timeout after 300 s</span>
+      <button type="button" class="link" style="color: var(--ink)">Retry PR</button>
+    </div>
+  </sc-if>
+
+  <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px">
+    <div style="display: flex; gap: 20px">
+      <sc-if value="{{running}}" hint-placeholder-val="{{ true }}">
+        <button type="button" class="link" onClick="{{stop}}">Stop</button>
+      </sc-if>
+      <button type="button" class="link" aria-expanded="{{logOpen}}" onClick="{{toggleLog}}">{{logLabel}}</button>
+    </div>
+    <sc-if value="{{running}}" hint-placeholder-val="{{ true }}">
+      <a class="btn pri" href="Council.dc.html">Watch the council</a>
+    </sc-if>
+    <sc-if value="{{stopped}}" hint-placeholder-val="{{ false }}">
+      <button type="button" class="btn pri" onClick="{{resume}}">Resume from classify</button>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{showLog}}" hint-placeholder-val="{{ false }}">
+    <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--ink-soft)">
+      <li>23:22:04 · EvaluatorVerdict · pr 1188 approved</li>
+      <li>23:21:37 · EvaluatorVerdict · pr 1188 revise</li>
+      <li>23:21:02 · Error · classify · pr 1172 timeout</li>
+      <li>23:19:12 · StageStarted · classify · 58</li>
+      <li>23:19:10 · PRFiltered · pr 1179 · no security keyword</li>
+      <li>23:18:01 · RateLimited · waited 41 s</li>
+    </ol>
+  </sc-if>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { stopped: false, log: false }; }
+  renderVals() {
+    var self = this, s = this.state;
+    var raw = [
+      { n: 'I', name: 'Mine', d: '200 PRs', st: 'done', note: 'Waited 41 s for the GitHub rate limit', nc: 'var(--bifrost)' },
+      { n: 'II', name: 'Normalize', d: '200', st: 'done' },
+      { n: 'III', name: 'Pre-filter', d: '58 kept · 142 dropped', st: 'done' },
+      { n: 'IV', name: 'Classify', d: s.stopped ? 'stopped · 48 / 58' : '48 / 58', st: s.stopped ? 'stopped' : 'running' },
+      { n: 'V', name: 'Consolidate', d: '', st: 'pending' },
+      { n: 'VI', name: 'Synthesize', d: '', st: 'pending' },
+      { n: 'VII', name: 'SECURITY.md', d: '', st: 'pending' },
+      { n: 'VIII', name: 'Bundle', d: '', st: 'pending' }
+    ];
+    return {
+      theme: this.props.theme ?? 'dark',
+      headLabel: s.stopped ? 'Stopped · finished PRs are saved' : 'Running · 06:12',
+      headColor: s.stopped ? 'var(--no)' : 'var(--ink-soft)',
+      stages: raw.map(function (r) {
+        var st = r.st;
+        return { num: r.n, name: r.name, showBar: st === 'running',
+          detail: st === 'done' ? '✓ ' + r.d : r.d,
+          hasNote: !!r.note, note: r.note || '', noteColor: r.nc || 'var(--ink-soft)',
+          numColor: st === 'pending' ? 'var(--ink-soft)' : 'var(--ember)',
+          nameColor: st === 'pending' ? 'var(--ink-soft)' : 'var(--ink)',
+          stColor: st === 'done' ? 'var(--yes)' : st === 'running' ? 'var(--ember-hi)' : st === 'stopped' ? 'var(--no)' : 'var(--ink-soft)' };
+      }),
+      hasError: true,
+      running: !s.stopped, stopped: s.stopped,
+      stop: function () { self.setState({ stopped: true }); },
+      resume: function () { self.setState({ stopped: false }); },
+      showLog: s.log, logOpen: s.log ? 'true' : 'false', logLabel: s.log ? 'Hide log' : 'Show log',
+      toggleLog: function () { self.setState({ log: !s.log }); }
+    };
+  }
+}
+</script>
+</body>
+</html>
