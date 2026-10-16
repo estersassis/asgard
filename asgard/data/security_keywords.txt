@@ -1,4 +1,9 @@
 # Case-insensitive substrings. One term per line. Lines starting with # are comments.
+# Seed list, then terms mined from Django PRs classified as security-related
+# (llm-pr-security-classifier data/django_gemini_3.1-flash-lite_0_clean_only_classified.json).
+# Prefer stems that stay specific under substring match; avoid short ambiguous tokens.
+
+# --- core ---
 auth
 csrf
 xss
@@ -16,3 +21,54 @@ permission
 privilege
 oauth
 session
+
+# --- escaping / injection ---
+escap
+
+# --- access control ---
+bypass
+lookup_allowed
+has_perm
+login_required
+access control
+
+# --- crypto / integrity ---
+pickl
+signer
+signing
+cryptograph
+checksum
+plaintext
+constant_time_compare
+
+# --- browser / django security settings ---
+allowed_hosts
+is_safe_url
+open redirect
+host header
+cross-origin
+samesite
+hsts
+disallowedhost
+suspiciousoperation
+secure_proxy
+debug=true
+cookie
+
+# --- disclosure / hardening language ---
+insecure
+unsafe
+sensitive
+malicious
+exploit
+attack
+misconfig
+stack trace
+
+# --- attack patterns ---
+traversal
+null byte
+spoof
+tamper
+race condition
+symlink
