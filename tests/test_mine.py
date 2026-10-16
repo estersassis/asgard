@@ -120,7 +120,12 @@ def _node(
     }
 
 
-def _page(nodes: list[dict[str, object]], *, has_next: bool = False, cursor: str | None = None) -> bytes:
+def _page(
+    nodes: list[dict[str, object]],
+    *,
+    has_next: bool = False,
+    cursor: str | None = None,
+) -> bytes:
     return json.dumps(
         {
             "data": {
@@ -165,7 +170,17 @@ def test_mine_stage_lists_caches_and_emits(tmp_path: Path) -> None:
         assert body["variables"]["states"] == ["CLOSED", "MERGED"]
         assert body["variables"]["pageSize"] == 50
         return _Response(
-            _page([_node(7, "2024-03-01", updated_at=updated["value"], body="the change", state="CLOSED")])
+            _page(
+                [
+                    _node(
+                        7,
+                        "2024-03-01",
+                        updated_at=updated["value"],
+                        body="the change",
+                        state="CLOSED",
+                    )
+                ]
+            )
         )
 
     sink = _Sink()

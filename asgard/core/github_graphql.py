@@ -14,10 +14,10 @@ from typing import Any
 from asgard.core.config import ConfigError, Filters
 from asgard.core.events import Event, RateLimited
 from asgard.core.github import (
-    _Transport,
     _cache_hit,
     _github_error,
     _pause,
+    _Transport,
     _write_json,
 )
 
