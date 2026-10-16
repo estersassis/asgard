@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from asgard.core.config import prepare_run
-from asgard.core.pipeline import PIPELINE, run_pipeline
+from asgard.core.pipeline import PIPELINE, clear_from, run_pipeline
 from asgard.core.stage import CancelledError
 from asgard.ui.sink import UISink
+
+_PROMPT = "system_prompt.txt"
 
 
 class RunSession:
@@ -72,15 +74,34 @@ class RunSession:
     def stop(self) -> None:
         self._cancel.set()
 
-    def resume(self, from_stage: str) -> Path:
+    def resume(self, from_stage: str, *, rerun: bool = False) -> Path:
         if from_stage not in PIPELINE:
             raise ValueError(f"unknown stage: {from_stage}")
         if self.output_dir is None:
             raise RuntimeError("no run to resume")
         self.join()
+        if rerun:
+            clear_from(self.output_dir, from_stage)
         return self.start(
             config_path=self.output_dir / "config.json",
             start=from_stage,
+        )
+
+    def regenerate_from(self, stage: str, *, prompt: str | None = None) -> Path:
+        """Clear ``stage`` and later outputs, then resume from that stage."""
+        if stage not in PIPELINE:
+            raise ValueError(f"unknown stage: {stage}")
+        if self.output_dir is None:
+            raise RuntimeError("no run to resume")
+        self.join()
+        if prompt is not None:
+            path = self.output_dir / "synthesize" / _PROMPT
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(prompt, encoding="utf-8")
+        clear_from(self.output_dir, stage)
+        return self.start(
+            config_path=self.output_dir / "config.json",
+            start=stage,
         )
 
     def join(self, timeout: float | None = None) -> None:

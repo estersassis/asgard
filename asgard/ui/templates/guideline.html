@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}ASGARD · Guideline{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', path='css/guideline.css') }}">
+{% endblock %}
+{% block page_class %} guideline-page{% endblock %}
+{% block content %}
+  <div class="guideline" id="guideline" data-run="{{ request.query_params.get('run', '') }}">
+    <div class="guideline-toolbar">
+      <span class="lbl" id="guideline-label">SECURITY.md</span>
+      <div class="guideline-actions">
+        <button type="button" class="link" id="guideline-edit" aria-expanded="false">Edit prompt</button>
+        <a class="link" id="guideline-bundle" hidden>Run bundle (.zip)</a>
+        <a class="btn pri" id="guideline-download" hidden>SECURITY.md ↓</a>
+      </div>
+    </div>
+
+    <div class="guideline-prompt" id="guideline-prompt-panel" hidden>
+      <label class="guideline-prompt-label">
+        <span class="lbl">Synthesis prompt</span>
+        <textarea id="guideline-prompt" rows="8" spellcheck="false"></textarea>
+      </label>
+      <div class="guideline-prompt-row">
+        <span class="guideline-reuse" id="guideline-reuse"></span>
+        <button type="button" class="btn" id="guideline-regenerate">Regenerate</button>
+      </div>
+    </div>
+
+    <p class="guideline-empty" id="guideline-empty" hidden>
+      Open a finished run with <code>?run=</code> to preview SECURITY.md.
+    </p>
+    <p class="guideline-status" id="guideline-status" hidden></p>
+    <p class="guideline-error" id="guideline-error" hidden></p>
+
+    <article class="ms" id="guideline-preview" hidden></article>
+  </div>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', path='js/guideline.js') }}" defer></script>
+{% endblock %}
