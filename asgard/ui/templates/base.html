@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}ASGARD{% endblock %}</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..500&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/shell.css') }}">
+</head>
+<body>
+  <div class="ag"{% if theme == 'light' %} data-theme="light"{% endif %}>
+    <header class="site-header">
+      <a class="brand" href="{{ url_for('setup') }}">
+        <svg width="26" height="24" viewBox="0 0 100 92" aria-hidden="true">
+          <rect x="15" y="40" width="13" height="49" rx="1" fill="var(--ember)"></rect>
+          <rect x="72" y="40" width="13" height="49" rx="1" fill="var(--ember)"></rect>
+          <path d="M17 41 L36 20 L50 11 L64 20 L83 41" fill="none" stroke="var(--ember)" stroke-width="11" stroke-linejoin="round" stroke-linecap="round"></path>
+          <polygon points="50,3 41,14 50,25" fill="var(--no)"></polygon>
+          <polygon points="50,3 59,14 50,25" fill="var(--yes)"></polygon>
+        </svg>
+        <span class="serif brand-mark">ASGARD</span>
+      </a>
+      <nav class="screens" aria-label="Screens">
+        <a class="nav{% if screen == 'setup' %} on{% endif %}" href="{{ url_for('setup') }}"{% if screen == 'setup' %} aria-current="page"{% endif %}><span class="n">I</span>Setup</a>
+        <a class="nav{% if screen == 'pipeline' %} on{% endif %}" href="{{ url_for('pipeline') }}"{% if screen == 'pipeline' %} aria-current="page"{% endif %}><span class="n">II</span>Pipeline</a>
+        <a class="nav{% if screen == 'council' %} on{% endif %}" href="{{ url_for('council') }}"{% if screen == 'council' %} aria-current="page"{% endif %}><span class="n">III</span>Council</a>
+        <a class="nav{% if screen == 'guideline' %} on{% endif %}" href="{{ url_for('guideline') }}"{% if screen == 'guideline' %} aria-current="page"{% endif %}><span class="n">IV</span>Guideline</a>
+        <a class="nav{% if screen == 'forge' %} on{% endif %}" href="{{ url_for('forge') }}"{% if screen == 'forge' %} aria-current="page"{% endif %}><span class="n">V</span>Forge</a>
+      </nav>
+    </header>
+    <main class="page">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

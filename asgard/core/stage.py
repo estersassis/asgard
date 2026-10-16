@@ -21,10 +21,25 @@ STAGE_NAMES = (
 )
 
 
+class CancelledError(Exception):
+    """The run was stopped cooperatively. Partial outputs are kept for resume."""
+
+
 class RunContext:
-    def __init__(self, run_dir: Path, emit: Callable[[Event], None]) -> None:
+    def __init__(
+        self,
+        run_dir: Path,
+        emit: Callable[[Event], None],
+        *,
+        cancel: Callable[[], bool] | None = None,
+    ) -> None:
         self.run_dir = run_dir
         self.emit = emit
+        self._cancel = cancel or (lambda: False)
+
+    def check_cancelled(self) -> None:
+        if self._cancel():
+            raise CancelledError("run stopped")
 
 
 class Stage(ABC):
@@ -75,6 +90,7 @@ class Stage(ABC):
         for item_id, item in items:
             if item_id in done:
                 continue
+            ctx.check_cancelled()
             result = fn(item_id, item)
             self.save_item(ctx, item_id, result)
             outputs.append(result)
@@ -93,6 +109,7 @@ class Stage(ABC):
         if self.is_done(ctx):
             ctx.emit(StageFinished(stage=self.name, skipped=True))
             return self.load(ctx)
+        ctx.check_cancelled()
         ctx.emit(StageStarted(stage=self.name, total=self.item_total(data)))
         try:
             output = self.execute(ctx, data)

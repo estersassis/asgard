@@ -9,34 +9,12 @@ from pydantic import ValidationError
 
 from asgard.cli.logs import show_logs
 from asgard.core.config import ConfigError, RunConfig, prepare_run
-from asgard.core.orchestrator import Orchestrator
-from asgard.core.sinks import (
-    CLIProgressSink,
-    JSONLSink,
-    LoggingSink,
-    StreamJSONSink,
-)
-from asgard.core.stages.bundle import BundleStage, export_classifications
-from asgard.core.stages.classify import ClassifyStage
-from asgard.core.stages.consolidate import ConsolidateStage
-from asgard.core.stages.mine import MineStage
-from asgard.core.stages.normalize import NormalizeStage
-from asgard.core.stages.prefilter import PrefilterStage
-from asgard.core.stages.security_md import SecurityMdStage
-from asgard.core.stages.synthesize import SynthesizeStage
-from asgard.providers.factory import LLMFactory
+from asgard.core.pipeline import PIPELINE, run_pipeline
+from asgard.core.sinks import CLIProgressSink, LoggingSink, StreamJSONSink
+from asgard.core.stages.bundle import export_classifications
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
-_PIPELINE = (
-    "mine",
-    "normalize",
-    "prefilter",
-    "classify",
-    "consolidate",
-    "synthesize",
-    "security_md",
-    "bundle",
-)
+_PIPELINE = PIPELINE
 
 
 def main(
@@ -53,6 +31,17 @@ def main(
             return
         if args.command == "logs":
             show_logs(args.run_dir, follow=args.follow, stage=args.stage)
+            return
+        if args.command == "ui":
+            try:
+                from asgard.ui.app import serve
+            except ImportError as exc:
+                print(
+                    "the web UI requires asgard[ui]; install with: pip install 'asgard[ui]'",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1) from exc
+            serve(host=args.host, port=args.port)
             return
         if args.command != "run":
             parser.print_help()
@@ -88,32 +77,16 @@ def _run_pipeline(
     sinks: list[Any] = []
     if not quiet:
         sinks.append(CLIProgressSink())
-    sinks.append(JSONLSink(config.output_dir / "events.jsonl"))
     if json_logs:
         sinks.append(StreamJSONSink(sys.stdout))
     sinks.append(LoggingSink())
-    factory = LLMFactory(config.llm, handlers=handlers)
-    stages = [
-        MineStage(opener=opener),
-        NormalizeStage(repo=config.repo),
-        PrefilterStage(),
-        ClassifyStage(
-            config.max_iterations,
-            factory,
-            batch_size=config.batch_size,
-            batch_max_chars=config.batch_max_chars,
-        ),
-        ConsolidateStage(config.include_unresolved),
-        SynthesizeStage(config.repo, factory),
-        SecurityMdStage(config.repo, config.llm, path=config.security_md),
-        BundleStage(config.export_xlsx),
-    ]
-    chosen = only if only is not None else start
-    Orchestrator(stages, sinks).run(
-        config.output_dir,
-        only=only,
+    run_pipeline(
+        config,
         start=start,
-        data=config if chosen in (None, stages[0].name) else None,
+        only=only,
+        sinks=sinks,
+        opener=opener,
+        handlers=handlers,
     )
 
 
@@ -188,6 +161,9 @@ def _parser() -> argparse.ArgumentParser:
         help="keep reading new events until interrupted",
     )
     logs.add_argument("--stage", choices=_PIPELINE, help="show one stage")
+    ui = sub.add_parser("ui", help="open the web UI (requires asgard[ui])")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8000)
     return parser
 
 

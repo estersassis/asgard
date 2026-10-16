@@ -1,0 +1,134 @@
+body {
+  margin: 0;
+  background: var(--stone);
+}
+
+.ag {
+  background: var(--stone);
+  color: var(--ink);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+.ag * {
+  box-sizing: border-box;
+}
+
+.serif {
+  font-family: "Fraunces", Georgia, serif;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 20px 48px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.brand-mark {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.14em;
+}
+
+.screens {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  min-height: 44px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  font-size: 13px;
+  border-bottom: 1px solid transparent;
+}
+
+.nav:hover {
+  color: var(--ink);
+}
+
+.nav .n {
+  font-family: "Fraunces", Georgia, serif;
+  color: var(--ember);
+}
+
+.nav.on {
+  color: var(--ink);
+  border-bottom-color: var(--ember);
+}
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 56px 24px 96px;
+}
+
+.lbl {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 24px;
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.btn.pri {
+  background: var(--ember);
+  border-color: var(--ember);
+  color: var(--on-ember);
+  font-weight: 600;
+}
+
+.btn.pri:hover {
+  background: var(--ember-hi);
+}
+
+.link {
+  background: none;
+  border: 0;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 44px;
+  padding: 0;
+}
+
+.link:hover {
+  color: var(--ink);
+}
+
+a {
+  color: var(--ember);
+}
