@@ -323,6 +323,94 @@ def test_shell_and_themes() -> None:
         assert not _TOKEN_HEX.search(text), path
 
 
+def test_pipeline_page_assets() -> None:
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+
+    page = client.get("/pipeline")
+    assert page.status_code == 200
+    assert "ASGARD" in page.text
+    assert "II</span>Pipeline" in page.text
+    assert "/static/css/pipeline.css" in page.text
+    assert "/static/js/pipeline.js" in page.text
+    assert 'data-theme="light"' not in page.text
+    assert not _TOKEN_HEX.search(page.text)
+
+    light = client.get("/pipeline?theme=light")
+    assert light.status_code == 200
+    assert 'data-theme="light"' in light.text
+
+    css = client.get("/static/css/pipeline.css")
+    assert css.status_code == 200
+    assert ".stage" in css.text
+    assert "var(--ember)" in css.text or "var(--bifrost)" in css.text
+
+    js = client.get("/static/js/pipeline.js")
+    assert js.status_code == 200
+    assert "/api/runs/" in js.text
+    assert "/events" in js.text
+    assert "/log" in js.text
+    assert "/council?run=" in js.text
+
+
+def test_pipeline_log_config_and_removed_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numbers = _numbers()
+    security = numbers[0]
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    out = tmp_path / "out"
+    source = _settings(tmp_path, out)
+    app = create_app(
+        opener=_opener(numbers),
+        handlers={"fake": _handler(security)},
+        dotenv=None,
+    )
+    client = TestClient(app)
+
+    missing = client.get("/api/runs/missing/log")
+    assert missing.status_code == 404
+
+    response = client.post("/api/runs", json={"config": str(source)})
+    assert response.status_code == 200, response.text
+    run_id = response.json()["id"]
+    status = _wait_done(client, run_id)
+    assert status["error"] is None
+
+    disk_log = (out / "events.jsonl").read_text(encoding="utf-8")
+    api_log = client.get(f"/api/runs/{run_id}/log")
+    assert api_log.status_code == 200
+    assert "text/plain" in api_log.headers.get("content-type", "")
+    assert api_log.text == disk_log
+    assert "StageStarted" in api_log.text
+    assert "ClassifyProgress" in api_log.text
+    disk_events = _events(out / "events.jsonl")
+    api_events = [
+        {key: value for key, value in json.loads(line).items() if key != "at"}
+        for line in api_log.text.splitlines()
+        if line
+    ]
+    assert api_events == disk_events
+    assert {"type": "StageStarted", "stage": "mine", "total": None} in api_events
+    assert any(event["type"] == "ClassifyProgress" for event in api_events)
+
+    disk_config = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    api_config = client.get(f"/api/runs/{run_id}/config")
+    assert api_config.status_code == 200
+    assert api_config.json() == disk_config
+    assert api_config.json()["repo"] == "jpadilla/pyjwt"
+    assert "prefilter" in api_config.json()
+
+    removed_path = out / "prefilter" / "removed.json"
+    assert removed_path.is_file()
+    disk_removed = json.loads(removed_path.read_text(encoding="utf-8"))
+    api_removed = client.get(f"/api/runs/{run_id}/prefilter/removed")
+    assert api_removed.status_code == 200
+    assert api_removed.json() == disk_removed
+    assert {"before", "after", "removed"} <= set(api_removed.json())
+
+
 def test_stop_and_resume_from_stage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -395,6 +483,11 @@ def test_stop_and_resume_from_stage(
     assert status["error"] == "run stopped"
     assert not (out / "bundle" / "output.json").exists()
 
+    mine_output = out / "mine" / "output.json"
+    assert mine_output.is_file()
+    mine_before = mine_output.read_text(encoding="utf-8")
+    mine_mtime = mine_output.stat().st_mtime_ns
+
     # Finish the interrupted classify item work that may have completed, then resume.
     if (out / "classify" / "output.json").exists():
         from_stage = "consolidate"
@@ -415,6 +508,10 @@ def test_stop_and_resume_from_stage(
     assert status["error"] is None
     assert (out / "SECURITY.md").is_file()
     assert (out / "manifest.json").is_file()
+    # Resume from a later stage must not re-mine; PR list and file stay untouched.
+    assert from_stage != "mine"
+    assert mine_output.read_text(encoding="utf-8") == mine_before
+    assert mine_output.stat().st_mtime_ns == mine_mtime
 
 
 def test_setup_env_prefills_from_dotenv(
