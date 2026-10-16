@@ -108,6 +108,22 @@ def test_outside_citation_is_rejected_and_the_second_call_corrects(tmp_path: Pat
     assert chunks == [bad, good]
 
 
+def test_sparse_guideline_triggers_a_second_call(tmp_path: Path) -> None:
+    records = [_record(str(n)) for n in range(1, 41)]
+    thin = _response([["1"], ["2"]])
+    dense_groups = [[str(n)] for n in range(1, 31)]
+    dense = _response(dense_groups)
+    handler = FakeHandler([thin, dense])
+    output, events = _run(tmp_path, handler, records)
+    assert len(handler.calls) == 2
+    note = handler.calls[1][-1].content
+    assert "only 2 recommendations" in note
+    assert "at least 30" in note
+    assert len(_recommendation_ids(output)) == 30
+    chunks = [event.text for event in events if isinstance(event, SynthesisChunk)]
+    assert chunks == [thin, dense]
+
+
 def test_build_messages_uses_system_prompt_override() -> None:
     records = [_record("12")]
     messages = build_messages("acme/app", records, system_prompt="Guide {repository}.")
