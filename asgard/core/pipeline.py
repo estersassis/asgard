@@ -1,6 +1,8 @@
 """Build and run the standard ASGARD pipeline. Shared by CLI and UI."""
 
+import shutil
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from asgard.core.config import RunConfig
@@ -27,6 +29,40 @@ PIPELINE = (
     "security_md",
     "bundle",
 )
+
+_PROMPT = "system_prompt.txt"
+_ROOT = {
+    "security_md": ("SECURITY.md",),
+    "bundle": ("manifest.json",),
+}
+
+
+def clear_from(run_dir: Path, stage: str) -> None:
+    """Remove ``stage`` and every later stage output so resume can re-run them.
+
+    Keeps ``synthesize/system_prompt.txt`` when that stage directory is cleared.
+    Also drops root ``SECURITY.md`` / ``manifest.json`` when those stages are
+    in the cleared range.
+    """
+    if stage not in PIPELINE:
+        raise ValueError(f"unknown stage: {stage}")
+    start = PIPELINE.index(stage)
+    cleared = PIPELINE[start:]
+    prompt_path = run_dir / "synthesize" / _PROMPT
+    prompt: str | None = None
+    if "synthesize" in cleared and prompt_path.is_file():
+        prompt = prompt_path.read_text(encoding="utf-8")
+    for name in cleared:
+        directory = run_dir / name
+        if directory.exists():
+            shutil.rmtree(directory)
+        for relative in _ROOT.get(name, ()):
+            path = run_dir / relative
+            if path.is_file():
+                path.unlink()
+    if prompt is not None:
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(prompt, encoding="utf-8")
 
 
 def build_stages(
