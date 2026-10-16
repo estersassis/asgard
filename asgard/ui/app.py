@@ -92,7 +92,11 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     @app.get("/setup", response_class=HTMLResponse, name="setup")
     async def setup(request: Request) -> HTMLResponse:
-        return _screen(request, "setup", "I", "Setup")
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"screen": "setup", "theme": _theme(request)},
+        )
 
     @app.get("/pipeline", response_class=HTMLResponse, name="pipeline")
     async def pipeline(request: Request) -> HTMLResponse:

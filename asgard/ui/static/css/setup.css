@@ -1,0 +1,199 @@
+/* Setup screen — layout and form pieces from docs/ui/DESIGN.md § I */
+
+.setup-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+}
+
+.setup-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  text-align: center;
+  position: relative;
+  width: 100%;
+}
+
+.setup-glow {
+  position: absolute;
+  top: -40px;
+  width: 320px;
+  height: 240px;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--ember) 16%, transparent),
+    transparent 65%
+  );
+}
+
+.setup-gate {
+  position: relative;
+}
+
+.setup-title {
+  position: relative;
+  margin: 0;
+  font-weight: 300;
+  font-size: 48px;
+  line-height: 1.08;
+}
+
+.setup-title em {
+  font-style: italic;
+  color: var(--ember);
+}
+
+.setup-lead {
+  position: relative;
+  margin: 0;
+  color: var(--ink-soft);
+  max-width: 44ch;
+}
+
+.setup-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.f {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inp {
+  width: 100%;
+  min-height: 48px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 0;
+  border-radius: 0;
+  appearance: none;
+}
+
+select.inp {
+  cursor: pointer;
+}
+
+.inp:focus {
+  outline: none;
+  border-bottom-color: var(--ember);
+}
+
+.hint {
+  font-size: 12px;
+  margin-top: 6px;
+  color: var(--ink-soft);
+}
+
+.hint.ok {
+  color: var(--yes);
+}
+
+.hint.err {
+  color: var(--no);
+}
+
+.setup-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 28px;
+}
+
+.setup-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px 28px;
+}
+
+.setup-creds {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.setup-more {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.setup-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.setup-role {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.role-classifier {
+  color: var(--ember);
+}
+
+.role-evaluator {
+  color: var(--bifrost);
+}
+
+.role-synthesizer {
+  color: var(--ink-soft);
+}
+
+.setup-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.setup-actions .btn.pri {
+  min-width: 240px;
+}
+
+.setup-io {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.setup-dot {
+  color: var(--line);
+}
+
+.setup-cli {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.setup-error {
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .setup-title {
+    font-size: 36px;
+  }
+
+  .setup-grid-2,
+  .setup-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}

@@ -282,6 +282,18 @@ def test_shell_and_themes() -> None:
     assert "V</span>Forge" in dark.text
     assert 'data-theme="light"' not in dark.text
     assert "var(--ember)" in dark.text
+    assert "Open the gate to" in dark.text
+    assert 'aria-label="Run setup"' in dark.text
+    assert "Start run" in dark.text
+    assert "+ More options" in dark.text
+    assert "Load asgard.toml" in dark.text
+    assert "Save asgard.toml" in dark.text
+    assert "/static/css/setup.css" in dark.text
+    assert "/static/js/setup.js" in dark.text
+
+    home = client.get("/")
+    assert home.status_code == 200
+    assert 'aria-label="Run setup"' in home.text
 
     light = client.get("/setup?theme=light")
     assert light.status_code == 200
@@ -292,6 +304,17 @@ def test_shell_and_themes() -> None:
     assert "--stone:" in tokens.text
     assert '--ember: #D68C42' in tokens.text or "--ember:#D68C42" in tokens.text.replace(" ", "")
     assert 'data-theme="light"' in tokens.text
+
+    setup_css = client.get("/static/css/setup.css")
+    assert setup_css.status_code == 200
+    assert ".inp" in setup_css.text
+    assert ".hint" in setup_css.text
+
+    setup_js = client.get("/static/js/setup.js")
+    assert setup_js.status_code == 200
+    assert "/api/setup/validate" in setup_js.text
+    assert "/api/runs" in setup_js.text
+    assert "/pipeline?run=" in setup_js.text
 
     templates = Path(__file__).resolve().parents[1] / "asgard" / "ui" / "templates"
     for path in templates.rglob("*.html"):
@@ -418,12 +441,15 @@ def test_setup_env_prefills_from_dotenv(
 
 def test_setup_toml_and_parse_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    monkeypatch.setenv("OPENAI_API_KEY", KEY)
     app = create_app(dotenv=None)
     client = TestClient(app)
     overrides = {
         "repo": "owner/name",
         "max_iterations": 4,
-        "filters": {"state": "closed", "max_prs": 20},
+        "batch_size": 10,
+        "prefilter": True,
+        "filters": {"state": "closed", "max_prs": 20, "since": "2023-01-01"},
         "llm": {
             "default": {"provider": "ollama", "model": "llama3.1"},
             "evaluator": {"provider": "openai", "model": "gpt-4o-mini"},
@@ -433,8 +459,13 @@ def test_setup_toml_and_parse_roundtrip(tmp_path: Path, monkeypatch: pytest.Monk
     assert saved.status_code == 200
     text = saved.text
     assert TOKEN not in text
+    assert KEY not in text
     assert "github_token" not in text
     assert "[keys]" not in text
+    assert "sk-" not in text
+    assert 'repo = "owner/name"' in text
+    assert "[llm.default]" in text
+    assert "[llm.evaluator]" in text
 
     rejected = client.post(
         "/api/setup/toml",
@@ -448,14 +479,31 @@ def test_setup_toml_and_parse_roundtrip(tmp_path: Path, monkeypatch: pytest.Monk
     assert "github_token" not in fields
     assert "keys" not in fields
     assert fields["repo"] == "owner/name"
+    assert fields["batch_size"] == 10
+    assert fields["prefilter"] is True
     assert fields["llm"]["evaluator"]["provider"] == "openai"
+
+    with_secrets = client.post(
+        "/api/setup/parse",
+        json={
+            "text": text
+            + '\ngithub_token = "ghp_should_strip"\n[keys]\nopenai = "sk-strip"\n'
+        },
+    )
+    assert with_secrets.status_code == 200
+    stripped = with_secrets.json()
+    assert "github_token" not in stripped
+    assert "keys" not in stripped
 
     target = tmp_path / "asgard.toml"
     target.write_text(text, encoding="utf-8")
     config, _ = load_run(target, {"output_dir": str(tmp_path / "out")})
     assert config.repo == "owner/name"
     assert config.max_iterations == 4
+    assert config.batch_size == 10
+    assert config.prefilter is True
     assert config.filters.state == "closed"
+    assert config.llm.evaluator.provider == "openai"
 
 
 def test_setup_validate_probes_resolved_providers_only(
@@ -550,6 +598,45 @@ def test_start_run_with_secrets_omits_them_from_config(
     saved = (out / "config.json").read_text(encoding="utf-8")
     assert TOKEN not in saved
     assert "github_token" not in json.loads(saved)
+
+
+def test_start_run_from_setup_overrides_omits_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """UI Start path: overrides + secrets overlay, same redacted config.json as CLI."""
+    numbers = _numbers()
+    security = numbers[0]
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    out = tmp_path / "out"
+    app = create_app(
+        opener=_opener(numbers),
+        handlers={"fake": _handler(security)},
+        dotenv=None,
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/api/runs",
+        json={
+            "overrides": {
+                "repo": "jpadilla/pyjwt",
+                "output_dir": str(out),
+                "llm": {"default": {"provider": "fake", "model": "fake"}},
+            },
+            "secrets": {"GITHUB_TOKEN": TOKEN, "OPENAI_API_KEY": KEY},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "id" in payload
+    status = _wait_done(client, payload["id"])
+    assert status["error"] is None
+    saved = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    assert "github_token" not in saved
+    assert "keys" not in saved
+    dumped = json.dumps(saved)
+    assert TOKEN not in dumped
+    assert KEY not in dumped
 
 
 def test_cancel_stops_between_items(tmp_path: Path) -> None:
