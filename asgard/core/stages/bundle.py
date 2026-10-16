@@ -83,7 +83,7 @@ class BundleStage(Stage):
             "version": _package_version(),
             "commit": _commit(),
             "config": config,
-            "prompts": _prompts(config),
+            "prompts": _prompts(config, ctx.run_dir),
             "models": _models(config),
             "counts": _counts(ctx),
             "stages": _stages(ctx),
@@ -107,11 +107,15 @@ def _config(ctx: RunContext) -> dict[str, Any] | None:
     return {key: value for key, value in data.items() if key not in _SECRET_KEYS}
 
 
-def _prompts(config: dict[str, Any] | None) -> dict[str, str | None]:
+def _prompts(config: dict[str, Any] | None, run_dir: Path) -> dict[str, str | None]:
     repo = config.get("repo") if config else None
     synthesizer = None
     if isinstance(repo, str) and repo:
-        synthesizer = _sha(SYNTHESIZER_PROMPT.format(repository=repo))
+        prompt = SYNTHESIZER_PROMPT
+        override = run_dir / "synthesize" / "system_prompt.txt"
+        if override.is_file():
+            prompt = override.read_text(encoding="utf-8")
+        synthesizer = _sha(prompt.format(repository=repo))
     return {
         "classifier": _sha(CLASSIFIER_PROMPT),
         "evaluator": _sha(EVALUATOR_PROMPT),

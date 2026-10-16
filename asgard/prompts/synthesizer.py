@@ -35,13 +35,19 @@ Each recommendation has:
 """
 
 
-def build_messages(repository: str, records: list[dict[str, Any]]) -> list[Message]:
+def build_messages(
+    repository: str,
+    records: list[dict[str, Any]],
+    system_prompt: str | None = None,
+) -> list[Message]:
     """Return the system prompt and one user message for this repository.
 
     ``repository`` is owner/name and replaces ``{repository}`` in the system prompt.
+    ``system_prompt`` overrides ``SYSTEM_PROMPT`` when set (same ``{repository}`` template).
     The user message is the JSON of the full consolidated list.
     """
+    prompt = SYSTEM_PROMPT if system_prompt is None else system_prompt
     return [
-        Message(role="system", content=SYSTEM_PROMPT.format(repository=repository)),
+        Message(role="system", content=prompt.format(repository=repository)),
         Message(role="user", content=json.dumps(records, indent=2)),
     ]
