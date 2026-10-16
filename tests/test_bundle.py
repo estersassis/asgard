@@ -130,6 +130,19 @@ def _run(root: Path, *, export_xlsx: bool = False) -> dict[str, object]:
     return manifest
 
 
+def test_synthesizer_prompt_hash_uses_override_file(tmp_path: Path) -> None:
+    _layout(tmp_path)
+    override = "Override for {repository}."
+    _write(tmp_path / "synthesize" / "system_prompt.txt", override)
+
+    manifest = _run(tmp_path)
+
+    assert manifest["prompts"]["synthesizer"] == _sha(override.format(repository="acme/app"))
+    assert manifest["prompts"]["synthesizer"] != _sha(
+        SYNTHESIZER_PROMPT.format(repository="acme/app")
+    )
+
+
 def test_manifest_describes_every_file_and_omits_secrets(tmp_path: Path) -> None:
     _layout(tmp_path)
 

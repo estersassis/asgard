@@ -7,6 +7,7 @@ from pathlib import Path
 from asgard.core.events import SynthesisChunk
 from asgard.core.stage import RunContext
 from asgard.core.stages.synthesize import SynthesizeStage
+from asgard.prompts.synthesizer import build_messages
 from asgard.providers.factory import LLMFactory
 from asgard.providers.handlers.fake import FakeHandler
 from asgard.providers.models import Credentials, LLMSettings, RoleSpec
@@ -105,3 +106,20 @@ def test_outside_citation_is_rejected_and_the_second_call_corrects(tmp_path: Pat
     assert _recommendation_ids(output) == [{"12"}]
     chunks = [event.text for event in events if isinstance(event, SynthesisChunk)]
     assert chunks == [bad, good]
+
+
+def test_build_messages_uses_system_prompt_override() -> None:
+    records = [_record("12")]
+    messages = build_messages("acme/app", records, system_prompt="Guide {repository}.")
+    assert messages[0].content == "Guide acme/app."
+    assert messages[1].content == json.dumps(records, indent=2)
+
+
+def test_stage_loads_system_prompt_override_from_run_dir(tmp_path: Path) -> None:
+    records = [_record("12")]
+    prompt = tmp_path / "synthesize" / "system_prompt.txt"
+    prompt.parent.mkdir(parents=True, exist_ok=True)
+    prompt.write_text("Custom {repository} policy.", encoding="utf-8")
+    handler = FakeHandler([_response([["12"]])])
+    _run(tmp_path, handler, records)
+    assert handler.calls[0][0].content == "Custom acme/app policy."
