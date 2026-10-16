@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from asgard.cli.main import main
-from asgard.core.config import Filters, RunConfig
+from asgard.core.config import Filters, MiningSettings, RunConfig
 from asgard.core.events import PRMined, StageFinished, StageStarted
 from asgard.core.orchestrator import Orchestrator
 from asgard.core.stages.mine import MineStage
@@ -25,6 +25,7 @@ from asgard.providers.handlers.fake import FakeHandler
 from asgard.providers.models import LLMSettings, RoleSpec
 
 TOKEN = "ghp_secret"
+_GRAPHQL = "https://api.github.com/graphql"
 
 
 def _events(path: Path) -> list[dict[str, object]]:
@@ -59,12 +60,13 @@ class _Sink:
         self.events.append(event)
 
 
-def _config(directory: Path, **filters: object) -> RunConfig:
+def _config(directory: Path, *, page_size: int = 50, **filters: object) -> RunConfig:
     return RunConfig(
         repo="jpadilla/pyjwt",
         github_token=TOKEN,
         llm=LLMSettings(default=RoleSpec(provider="fake", model="fake")),
         filters=Filters(**filters),
+        mining=MiningSettings(page_size=page_size),
         output_dir=directory,
     )
 
@@ -89,12 +91,70 @@ def _approved_handler() -> FakeHandler:
     return FakeHandler([classification, verdict])
 
 
-def _pull(number: int, day: str, updated_at: str = "2024-01-01T00:00:00Z") -> dict[str, object]:
+def _empty_connection() -> dict[str, object]:
+    return {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}
+
+
+def _node(
+    number: int,
+    day: str,
+    *,
+    updated_at: str = "2024-01-01T00:00:00Z",
+    body: str = "",
+    state: str = "OPEN",
+    merged: bool = False,
+    title: str = "",
+) -> dict[str, object]:
     return {
+        "id": f"PR_node_{number}",
         "number": number,
-        "created_at": f"{day}T00:00:00Z",
-        "updated_at": updated_at,
+        "title": title or f"pull {number}",
+        "body": body,
+        "state": state,
+        "merged": merged,
+        "createdAt": f"{day}T00:00:00Z",
+        "updatedAt": updated_at,
+        "baseRepository": {"nameWithOwner": "jpadilla/pyjwt"},
+        "comments": _empty_connection(),
+        "reviewThreads": _empty_connection(),
     }
+
+
+def _page(
+    nodes: list[dict[str, object]],
+    *,
+    has_next: bool = False,
+    cursor: str | None = None,
+) -> bytes:
+    return json.dumps(
+        {
+            "data": {
+                "repository": {
+                    "pullRequests": {
+                        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
+                        "nodes": nodes,
+                    }
+                },
+                "rateLimit": {
+                    "cost": 1,
+                    "remaining": 5000,
+                    "resetAt": "2024-01-01T01:00:00Z",
+                },
+            }
+        }
+    ).encode()
+
+
+def _graphql_body(request: urllib.request.Request) -> dict[str, object]:
+    raw = request.data
+    assert isinstance(raw, bytes)
+    payload = json.loads(raw.decode())
+    assert isinstance(payload, dict)
+    return payload
+
+
+def _is_repo_check(url: str) -> bool:
+    return url.startswith("https://api.github.com/repos/") and "/pulls" not in url
 
 
 def test_mine_stage_lists_caches_and_emits(tmp_path: Path) -> None:
@@ -105,12 +165,23 @@ def test_mine_stage_lists_caches_and_emits(tmp_path: Path) -> None:
         url = request.full_url
         seen.append(url)
         assert request.get_header("Authorization") == f"Bearer {TOKEN}"
-        if "/pulls?" in url:
-            body = [_pull(7, "2024-03-01", updated["value"])]
-            return _Response(json.dumps(body).encode())
-        if url.endswith("/pulls/7"):
-            return _Response(json.dumps({"number": 7, "body": "the change"}).encode())
-        return _Response(b"[]")
+        assert url == _GRAPHQL
+        body = _graphql_body(request)
+        assert body["variables"]["states"] == ["CLOSED", "MERGED"]
+        assert body["variables"]["pageSize"] == 50
+        return _Response(
+            _page(
+                [
+                    _node(
+                        7,
+                        "2024-03-01",
+                        updated_at=updated["value"],
+                        body="the change",
+                        state="CLOSED",
+                    )
+                ]
+            )
+        )
 
     sink = _Sink()
     config = _config(tmp_path, state="closed", max_prs=5)
@@ -120,7 +191,14 @@ def test_mine_stage_lists_caches_and_emits(tmp_path: Path) -> None:
     saved = json.loads((tmp_path / "mine" / "prs" / "7.json").read_text(encoding="utf-8"))
     assert saved["body"] == "the change"
     assert saved["updated_at"] == "2024-01-01T00:00:00Z"
-    assert "state=closed" in seen[0]
+    assert "timeline_items" in saved
+    metrics = json.loads((tmp_path / "mine" / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["api_requests"] == 1
+    assert metrics["page_size"] == 50
+    assert metrics["graphql_cost_total"] == 1
+    assert metrics["overflow_followups"] == 0
+    assert metrics["page_size_reductions"] == 0
+    assert isinstance(metrics["duration_s"], float)
     mined = [event for event in sink.events if isinstance(event, PRMined)]
     assert [event.pr_id for event in mined] == ["7"]
     assert isinstance(sink.events[0], StageStarted)
@@ -136,31 +214,44 @@ def test_mine_stage_lists_caches_and_emits(tmp_path: Path) -> None:
     (tmp_path / "mine" / "output.json").unlink()
     Orchestrator([MineStage(opener=opener)]).run(tmp_path, data=config)
     assert len(seen) == listed + 1
-    assert seen[-1].split("?", 1)[0].endswith("/pulls")
+    assert seen[-1] == _GRAPHQL
 
     updated["value"] = "2024-02-01T00:00:00Z"
     (tmp_path / "mine" / "output.json").unlink()
     before = len(seen)
     Orchestrator([MineStage(opener=opener)]).run(tmp_path, data=config)
-    assert len(seen) > before + 1
+    assert len(seen) == before + 1
     saved = json.loads((tmp_path / "mine" / "prs" / "7.json").read_text(encoding="utf-8"))
     assert saved["updated_at"] == "2024-02-01T00:00:00Z"
 
 
+def test_mine_stage_honors_page_size(tmp_path: Path) -> None:
+    sizes: list[int] = []
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        body = _graphql_body(request)
+        sizes.append(int(body["variables"]["pageSize"]))
+        return _Response(_page([]))
+
+    Orchestrator([MineStage(opener=opener)]).run(tmp_path, data=_config(tmp_path, page_size=10))
+    assert sizes == [10]
+    metrics = json.loads((tmp_path / "mine" / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["page_size"] == 10
+
+
 def test_mine_stage_applies_date_filters(tmp_path: Path) -> None:
     def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
-        url = request.full_url
-        if "/pulls?" in url:
-            assert "state=open" in url
-            body = [
-                _pull(3, "2024-03-01"),
-                _pull(2, "2024-02-01"),
-                _pull(1, "2024-01-01"),
-            ]
-            return _Response(json.dumps(body).encode())
-        if url.endswith("/pulls/2"):
-            return _Response(json.dumps({"number": 2, "body": "kept"}).encode())
-        return _Response(b"[]")
+        body = _graphql_body(request)
+        assert body["variables"]["states"] == ["OPEN"]
+        return _Response(
+            _page(
+                [
+                    _node(3, "2024-03-01", body="new"),
+                    _node(2, "2024-02-01", body="kept"),
+                    _node(1, "2024-01-01", body="old"),
+                ]
+            )
+        )
 
     config = _config(
         tmp_path,
@@ -169,12 +260,14 @@ def test_mine_stage_applies_date_filters(tmp_path: Path) -> None:
         until=date(2024, 2, 15),
     )
     assert Orchestrator([MineStage(opener=opener)]).run(tmp_path, data=config) == [2]
+    saved = json.loads((tmp_path / "mine" / "prs" / "2.json").read_text(encoding="utf-8"))
+    assert saved["body"] == "kept"
 
 
 def test_empty_repository_writes_an_empty_list(tmp_path: Path) -> None:
     def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
-        assert "/pulls?" in request.full_url
-        return _Response(b"[]")
+        assert request.full_url == _GRAPHQL
+        return _Response(_page([]))
 
     sink = _Sink()
     result = Orchestrator([MineStage(opener=opener)], [sink]).run(
@@ -184,6 +277,8 @@ def test_empty_repository_writes_an_empty_list(tmp_path: Path) -> None:
     assert result == []
     assert json.loads((tmp_path / "mine" / "output.json").read_text(encoding="utf-8")) == []
     assert list((tmp_path / "mine" / "prs").glob("*.json")) == []
+    metrics = json.loads((tmp_path / "mine" / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["api_requests"] == 1
     assert not any(isinstance(event, PRMined) for event in sink.events)
 
 
@@ -235,13 +330,14 @@ def test_run_mines_after_saving_config(
     def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
         url = request.full_url
         seen.append(url)
-        if "/pulls?" in url:
-            assert "state=closed" in url
-            body = [_pull(4, "2024-01-01")]
-            return _Response(json.dumps(body).encode())
-        if url.endswith("/pulls/4"):
-            return _Response(json.dumps({"number": 4, "body": "change"}).encode())
-        return _Response(b"[]")
+        if _is_repo_check(url):
+            return _Response(b"{}")
+        assert url == _GRAPHQL
+        body = _graphql_body(request)
+        assert body["variables"]["states"] == ["CLOSED", "MERGED"]
+        return _Response(
+            _page([_node(4, "2024-01-01", body="change", state="CLOSED")])
+        )
 
     main(
         ["run", "--config", str(source), "--max-prs", "1"],
@@ -255,6 +351,8 @@ def test_run_mines_after_saving_config(
     assert json.loads((out / "mine" / "output.json").read_text(encoding="utf-8")) == [4]
     cached = json.loads((out / "mine" / "prs" / "4.json").read_text(encoding="utf-8"))
     assert cached["body"] == "change"
+    metrics = json.loads((out / "mine" / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["api_requests"] >= 1
     events = _events(out / "events.jsonl")
     assert [event["type"] for event in events] == [
         "StageStarted",
@@ -328,6 +426,7 @@ def test_run_mines_after_saving_config(
         if path.is_file()
     }
     assert on_disk == set(recorded["files"])
+    assert recorded["files"]["mine/metrics.json"] == "GraphQL mining request and cost metrics."
     assert not (out / "bundle" / "classifications.xlsx").exists()
 
     calls = len(seen)
@@ -337,7 +436,7 @@ def test_run_mines_after_saving_config(
         handlers={"fake": _approved_handler()},
     )
     assert len(seen) == calls + 1
-    assert not seen[-1].endswith("/pulls/4")
+    assert seen[-1] != _GRAPHQL
     finished = _events(out / "events.jsonl")[-8:]
     assert finished == [
         {"type": "StageFinished", "stage": "mine", "skipped": True},
@@ -357,7 +456,7 @@ def test_run_mines_after_saving_config(
         handlers={"fake": _approved_handler()},
     )
     assert len(seen) == calls + 1
-    assert not seen[-1].endswith("/pulls/4")
+    assert seen[-1] != _GRAPHQL
     resumed = _events(out / "events.jsonl")[-4:]
     assert resumed == [
         {"type": "StageFinished", "stage": "consolidate", "skipped": True},
@@ -373,7 +472,7 @@ def test_run_mines_after_saving_config(
         handlers={"fake": _approved_handler()},
     )
     assert len(seen) == calls + 1
-    assert not seen[-1].endswith("/pulls/4")
+    assert seen[-1] != _GRAPHQL
     resumed_synthesis = _events(out / "events.jsonl")[-3:]
     assert resumed_synthesis == [
         {"type": "StageFinished", "stage": "synthesize", "skipped": True},
@@ -388,7 +487,7 @@ def test_run_mines_after_saving_config(
         handlers={"fake": _approved_handler()},
     )
     assert len(seen) == calls + 1
-    assert not seen[-1].endswith("/pulls/4")
+    assert seen[-1] != _GRAPHQL
     resumed_security = _events(out / "events.jsonl")[-2:]
     assert resumed_security == [
         {"type": "StageFinished", "stage": "security_md", "skipped": True},
@@ -433,11 +532,10 @@ def test_run_from_normalize_uses_the_saved_mine(
 
     def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
         seen.append(request.full_url)
-        if "/pulls?" in request.full_url:
-            return _Response(json.dumps([_pull(4, "2024-01-01")]).encode())
-        if request.full_url.endswith("/pulls/4"):
-            return _Response(json.dumps({"number": 4, "body": "change"}).encode())
-        return _Response(b"[]")
+        if _is_repo_check(request.full_url):
+            return _Response(b"{}")
+        assert request.full_url == _GRAPHQL
+        return _Response(_page([_node(4, "2024-01-01", body="change")]))
 
     with pytest.raises(SystemExit) as caught:
         main(
@@ -447,7 +545,7 @@ def test_run_from_normalize_uses_the_saved_mine(
         )
     assert caught.value.code == 2
     assert "previous stage is not done: mine" in capsys.readouterr().err
-    assert not any("/pulls" in url for url in seen)
+    assert _GRAPHQL not in seen
 
     main(
         ["run", "--config", str(source), "--max-prs", "1"],
@@ -464,7 +562,7 @@ def test_run_from_normalize_uses_the_saved_mine(
         handlers={"fake": _approved_handler()},
     )
     assert len(seen) == calls + 1
-    assert "/pulls" not in seen[-1]
+    assert seen[-1] != _GRAPHQL
     assert json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8")) == normalized
 
 
@@ -516,4 +614,5 @@ def test_live_public_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert len(numbers) == 1
     assert isinstance(numbers[0], int)
     assert (out / "mine" / "prs" / f"{numbers[0]}.json").is_file()
+    assert (out / "mine" / "metrics.json").is_file()
     assert os.environ["GITHUB_TOKEN"] not in (out / "config.json").read_text(encoding="utf-8")

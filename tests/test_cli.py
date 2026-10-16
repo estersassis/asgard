@@ -13,6 +13,7 @@ from asgard.cli.main import _PIPELINE, main
 from asgard.providers.handlers.fake import FakeHandler
 
 TOKEN = "ghp_secret"
+_GRAPHQL = "https://api.github.com/graphql"
 
 
 class _Response:
@@ -46,12 +47,44 @@ def _handler() -> FakeHandler:
     return FakeHandler([classification, verdict])
 
 
-def _pull(number: int) -> dict[str, object]:
+def _empty_connection() -> dict[str, object]:
+    return {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}
+
+
+def _node(number: int, *, body: str = "change") -> dict[str, object]:
     return {
+        "id": f"PR_node_{number}",
         "number": number,
-        "created_at": "2024-01-01T00:00:00Z",
-        "updated_at": "2024-01-01T00:00:00Z",
+        "title": f"pull {number}",
+        "body": body,
+        "state": "OPEN",
+        "merged": False,
+        "createdAt": "2024-01-01T00:00:00Z",
+        "updatedAt": "2024-01-01T00:00:00Z",
+        "baseRepository": {"nameWithOwner": "jpadilla/pyjwt"},
+        "comments": _empty_connection(),
+        "reviewThreads": _empty_connection(),
     }
+
+
+def _page(nodes: list[dict[str, object]]) -> bytes:
+    return json.dumps(
+        {
+            "data": {
+                "repository": {
+                    "pullRequests": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": nodes,
+                    }
+                },
+                "rateLimit": {
+                    "cost": 1,
+                    "remaining": 5000,
+                    "resetAt": "2024-01-01T01:00:00Z",
+                },
+            }
+        }
+    ).encode()
 
 
 def _settings(directory: Path, out: Path) -> Path:
@@ -77,13 +110,13 @@ def _opener(seen: list[str], *, fail_pulls: bool = False):
     def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
         url = request.full_url
         seen.append(url)
-        if "/pulls?" in url:
+        if url.startswith("https://api.github.com/repos/") and "/pulls" not in url:
+            return _Response(b"{}")
+        if url == _GRAPHQL:
             if fail_pulls:
                 raise RuntimeError("disk full")
-            return _Response(json.dumps([_pull(4)]).encode())
-        if url.endswith("/pulls/4"):
-            return _Response(json.dumps({"number": 4, "body": "change"}).encode())
-        return _Response(b"[]")
+            return _Response(_page([_node(4)]))
+        raise AssertionError(f"unexpected URL: {url}")
 
     return opener
 
@@ -148,7 +181,7 @@ def test_only_normalize_does_not_mine_again(
         opener=opener,
         handlers={"fake": _handler()},
     )
-    assert not any("/pulls" in url for url in seen[calls:])
+    assert _GRAPHQL not in seen[calls:]
     assert json.loads((out / "normalize" / "output.json").read_text(encoding="utf-8")) == saved
 
 

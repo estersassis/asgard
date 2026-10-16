@@ -1,4 +1,4 @@
-"""Full pipeline from recorded pyjwt REST fixtures. No network."""
+"""Full pipeline from recorded pyjwt fixtures via GraphQL. No network."""
 
 import json
 import urllib.request
@@ -12,7 +12,7 @@ from asgard.providers.handlers.fake import FakeHandler
 TOKEN = "ghp_secret"
 FIXTURES = Path(__file__).parent / "fixtures" / "pyjwt"
 _API = "https://api.github.com/repos/jpadilla/pyjwt"
-_LIST = f"{_API}/pulls?state=all&per_page=100&sort=created&direction=desc&page=1"
+_GRAPHQL = "https://api.github.com/graphql"
 _QUOTE = "the allow-list is what prevents algorithm-confusion"
 
 
@@ -40,34 +40,75 @@ def _numbers() -> list[int]:
     return [item["number"] for item in listed]
 
 
-def _routes(numbers: list[int]) -> dict[str, Path]:
-    routes = {
-        _API: FIXTURES / "repo.json",
-        _LIST: FIXTURES / "pulls.json",
+def _empty_connection() -> dict[str, object]:
+    return {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}
+
+
+def _graphql_state(rest: dict[str, object]) -> str:
+    if rest.get("merged") is True:
+        return "MERGED"
+    state = rest.get("state")
+    if state == "open":
+        return "OPEN"
+    if state == "closed":
+        return "CLOSED"
+    return "OPEN"
+
+
+def _node_from_fixture(number: int) -> dict[str, object]:
+    rest = json.loads((FIXTURES / f"{number}.json").read_text(encoding="utf-8"))
+    listed = next(
+        item
+        for item in json.loads((FIXTURES / "pulls.json").read_text(encoding="utf-8"))
+        if item["number"] == number
+    )
+    return {
+        "id": rest.get("node_id") or f"PR_node_{number}",
+        "number": number,
+        "title": rest.get("title") or listed.get("title") or "",
+        "body": rest.get("body") or "",
+        "state": _graphql_state(rest),
+        "merged": rest.get("merged") is True,
+        "createdAt": rest.get("created_at") or listed.get("created_at"),
+        "updatedAt": rest.get("updated_at") or listed.get("updated_at"),
+        "baseRepository": {"nameWithOwner": "jpadilla/pyjwt"},
+        "comments": _empty_connection(),
+        "reviewThreads": _empty_connection(),
     }
-    for number in numbers:
-        routes[f"{_API}/pulls/{number}"] = FIXTURES / f"{number}.json"
-        routes[f"{_API}/issues/{number}/comments?per_page=100&page=1"] = (
-            FIXTURES / "comments.json"
-        )
-        routes[f"{_API}/pulls/{number}/reviews?per_page=100&page=1"] = FIXTURES / "reviews.json"
-        routes[f"{_API}/pulls/{number}/comments?per_page=100&page=1"] = (
-            FIXTURES / "review_comments.json"
-        )
-    return routes
+
+
+def _graphql_page(numbers: list[int]) -> bytes:
+    return json.dumps(
+        {
+            "data": {
+                "repository": {
+                    "pullRequests": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [_node_from_fixture(number) for number in numbers],
+                    }
+                },
+                "rateLimit": {
+                    "cost": 1,
+                    "remaining": 5000,
+                    "resetAt": "2024-01-01T01:00:00Z",
+                },
+            }
+        }
+    ).encode()
 
 
 def _opener(numbers: list[int], seen: list[str]):
-    routes = _routes(numbers)
+    repo_body = (FIXTURES / "repo.json").read_bytes()
 
     def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
         url = request.full_url
-        path = routes.get(url)
-        if path is None:
+        if url not in (_API, _GRAPHQL):
             raise AssertionError(f"unexpected URL: {url}")
         assert request.get_header("Authorization") == f"Bearer {TOKEN}"
         seen.append(url)
-        return _Response(path.read_bytes())
+        if url == _API:
+            return _Response(repo_body)
+        return _Response(_graphql_page(numbers))
 
     return opener
 
@@ -155,7 +196,7 @@ def test_recorded_fixtures_produce_security_md(
         handlers={"fake": _handler(security)},
     )
 
-    assert seen == list(_routes(numbers))
+    assert seen == [_API, _GRAPHQL]
     link = f"https://github.com/jpadilla/pyjwt/pull/{security}"
     written = (out / "SECURITY.md").read_text(encoding="utf-8")
     assert link in written
@@ -163,6 +204,7 @@ def test_recorded_fixtures_produce_security_md(
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["counts"]["mined"] == 2
     assert manifest["counts"]["security"] == 1
+    assert manifest["files"]["mine/metrics.json"] == "GraphQL mining request and cost metrics."
     for path in out.rglob("*"):
         if path.is_file():
             assert TOKEN not in path.read_text(encoding="utf-8")
