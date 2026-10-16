@@ -31,6 +31,12 @@ from asgard.ui.session import RunSession, SessionStore
 _RUN_FILE_LOG = "events.jsonl"
 _RUN_FILE_CONFIG = "config.json"
 _RUN_FILE_PREFILTER_REMOVED = "prefilter/removed.json"
+_RUN_FILE_PREFILTER_OUTPUT = "prefilter/output.json"
+_RUN_FILE_MINE_OUTPUT = "mine/output.json"
+_RUN_FILE_CLASSIFY_TRACE = "classify/trace.jsonl"
+_RUN_FILE_CLASSIFY_METRICS = "classify/metrics.json"
+_RUN_FILE_CLASSIFY_OUTPUT = "classify/output.json"
+_RUN_FILE_CLASSIFY_ITEMS = "classify/items.jsonl"
 
 _UI_ROOT = Path(__file__).resolve().parent
 _ENV_PREFILL = (
@@ -128,7 +134,11 @@ def create_app(
 
     @app.get("/council", response_class=HTMLResponse, name="council")
     async def council(request: Request) -> HTMLResponse:
-        return _screen(request, "council", "III", "Council")
+        return templates.TemplateResponse(
+            request,
+            "council.html",
+            {"screen": "council", "theme": _theme(request)},
+        )
 
     @app.get("/guideline", response_class=HTMLResponse, name="guideline")
     async def guideline(request: Request) -> HTMLResponse:
@@ -274,6 +284,64 @@ def create_app(
             _session_or_404(run_id),
             _RUN_FILE_PREFILTER_REMOVED,
             "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/prefilter/output")
+    async def run_prefilter_output(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_PREFILTER_OUTPUT,
+            "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/mine/output")
+    async def run_mine_output(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_MINE_OUTPUT,
+            "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/mine/prs/{number}")
+    async def run_mine_pr(run_id: str, number: str) -> FileResponse:
+        if not number.isdigit():
+            raise HTTPException(status_code=404, detail="file not found")
+        return _run_file(
+            _session_or_404(run_id),
+            f"mine/prs/{number}.json",
+            "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/classify/trace")
+    async def run_classify_trace(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_CLASSIFY_TRACE,
+            "text/plain",
+        )
+
+    @app.get("/api/runs/{run_id}/classify/metrics")
+    async def run_classify_metrics(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_CLASSIFY_METRICS,
+            "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/classify/output")
+    async def run_classify_output(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_CLASSIFY_OUTPUT,
+            "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/classify/items")
+    async def run_classify_items(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_CLASSIFY_ITEMS,
+            "text/plain",
         )
 
     return app
