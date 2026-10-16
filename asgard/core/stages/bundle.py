@@ -36,6 +36,7 @@ _FILES = {
     "SECURITY.md": "Security guideline with pull request links and a provenance footer.",
     "manifest.json": "Run manifest.",
     "mine/output.json": "Mined pull request numbers.",
+    "mine/metrics.json": "GraphQL mining request and cost metrics.",
     "normalize/output.json": "Normalized pull requests.",
     "normalize/items.jsonl": "Per-pull-request checkpoint for normalization.",
     "prefilter/output.json": "Pull requests kept for classification.",
