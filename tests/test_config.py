@@ -611,7 +611,9 @@ def test_ollama_requires_pulled_model(
         prepare_run({}, path, dotenv=None, opener=missing)
 
 
-def test_dump_toml_roundtrips_without_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dump_toml_roundtrips_without_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     data = {
         "repo": "owner/name",
@@ -623,7 +625,12 @@ def test_dump_toml_roundtrips_without_secrets(tmp_path: Path, monkeypatch: pytes
         "filters": {"state": "closed", "max_prs": 10, "since": "2024-01-01"},
         "mining": {"page_size": 25},
         "llm": {
-            "default": {"provider": "ollama", "model": "llama3.1", "temperature": 0, "timeout": 300},
+            "default": {
+                "provider": "ollama",
+                "model": "llama3.1",
+                "temperature": 0,
+                "timeout": 300,
+            },
             "classifier": {"provider": "ollama", "model": "llama3.1"},
             "evaluator": {"provider": "openai", "model": "gpt-4o-mini"},
             "synthesizer": {"provider": "default"},
