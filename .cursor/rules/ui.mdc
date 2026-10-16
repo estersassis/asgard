@@ -1,0 +1,18 @@
+---
+description: Rules for building the ASGARD web UI (MVP 2, issues #19–#26) from the design reference in docs/ui
+globs: asgard/ui/**
+alwaysApply: false
+---
+
+# ASGARD UI
+
+- The design reference is `docs/ui/`. Read `docs/ui/DESIGN.md` first, then the screen you are building in `docs/ui/screens/` and its PNG in `docs/ui/screenshots/`.
+- Use the tokens from `DESIGN.md` as CSS custom properties. Never write a raw hex color in a component. Dark is the default theme; light comes from `data-theme="light"`.
+- Fonts: Fraunces for titles, numerals and big numbers; JetBrains Mono for everything else.
+- Keep it minimal: one primary (orange pill) action per screen. Secondary content goes behind a text-link expander, as in the mockups.
+- No business rules in `asgard/ui`. Every value on screen comes from an orchestrator event (`asgard/core/events.py`) or a run-directory file. Start, stop and resume runs only through the core API.
+- A run started from the UI must produce the same run directory as `asgard run`, and a config saved in the UI must run unchanged with `asgard run --config`.
+- Never save secrets (GitHub token, API keys) to `config.json`.
+- The mockup data is illustrative. Do not hard-code PR numbers, counts or metrics from the mockups.
+- `docs/ui/screens/support.js` only previews the mockups. Do not import it or reuse its template syntax.
+- UI copy is in English.

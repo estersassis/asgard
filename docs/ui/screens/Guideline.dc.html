@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ASGARD · Guideline</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..500&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#191B1F}
+.ag{--stone:#191B1F;--panel:#202327;--well:#141619;--ink:#E8E6D9;--ink-soft:#8D9082;--line:#2C2F2A;--ember:#D68C42;--ember-hi:#F0AC63;--bifrost:#6FA8C7;--yes:#6FB981;--no:#D97862;--on-ember:#1A1408}
+.ag[data-theme="light"]{--stone:#E3E1D4;--panel:#EDEBDE;--well:#D9D7C8;--ink:#23261F;--ink-soft:#55584C;--line:#C6C4B2;--ember:#A8652A;--ember-hi:#8C551E;--bifrost:#3C6E8C;--yes:#3F7A50;--no:#A8432F;--on-ember:#FFF8EE}
+.ag{background:var(--stone);color:var(--ink);font-family:'JetBrains Mono',Consolas,monospace;font-size:14px;line-height:1.6;min-height:100vh}
+.ag *{box-sizing:border-box}
+.serif{font-family:'Fraunces',Georgia,serif}
+.lbl{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
+.nav{display:flex;align-items:center;gap:8px;padding:0 12px;min-height:44px;color:var(--ink-soft);text-decoration:none;font-size:13px;border-bottom:1px solid transparent}
+.nav:hover{color:var(--ink)}
+.nav .n{font-family:'Fraunces',Georgia,serif;color:var(--ember)}
+.nav.on{color:var(--ink);border-bottom-color:var(--ember)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:44px;padding:0 22px;border-radius:999px;font:inherit;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);text-decoration:none}
+.btn.pri{background:var(--ember);border-color:var(--ember);color:var(--on-ember);font-weight:600}
+.link{background:none;border:0;color:var(--ink-soft);font:inherit;font-size:13px;cursor:pointer;min-height:44px;padding:0}
+.link:hover{color:var(--ink)}
+.ms{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:40px 48px;font-size:14px;line-height:1.7}
+.ms h1{margin:0 0 4px;font-family:'Fraunces',Georgia,serif;font-weight:500;font-size:28px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.ms h2{margin:28px 0 8px;font-family:'Fraunces',Georgia,serif;font-weight:500;font-size:21px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.ms h3{margin:24px 0 8px;font-size:15px;font-weight:600}
+.ms ul{margin:0;padding-left:22px}
+.ms li{margin:0 0 8px}
+.cite{background:none;border:0;padding:0;font:inherit;color:var(--ember);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.cite.warn{color:var(--no)}
+a{color:var(--ember)}
+</style>
+</helmet>
+<div class="ag" data-theme="{{theme}}">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; padding: 20px 48px">
+  <a href="Setup.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink)">
+    <svg width="26" height="24" viewBox="0 0 100 92" aria-hidden="true"><rect x="15" y="40" width="13" height="49" rx="1" fill="#C47C38"></rect><rect x="72" y="40" width="13" height="49" rx="1" fill="#C47C38"></rect><path d="M17 41 L36 20 L50 11 L64 20 L83 41" fill="none" stroke="#C47C38" stroke-width="11" stroke-linejoin="round" stroke-linecap="round"></path><polygon points="50,3 41,14 50,25" fill="#D97862"></polygon><polygon points="50,3 59,14 50,25" fill="#6FB981"></polygon></svg>
+    <span class="serif" style="font-weight: 700; font-size: 18px; letter-spacing: 0.14em">ASGARD</span>
+  </a>
+  <nav aria-label="Screens" style="display: flex; flex-wrap: wrap">
+    <a class="nav" href="Setup.dc.html"><span class="n">I</span>Setup</a>
+    <a class="nav" href="Pipeline.dc.html"><span class="n">II</span>Pipeline</a>
+    <a class="nav" href="Council.dc.html"><span class="n">III</span>Council</a>
+    <a class="nav on" href="Guideline.dc.html" aria-current="page"><span class="n">IV</span>Guideline</a>
+    <a class="nav" href="Forge.dc.html"><span class="n">V</span>Forge</a>
+  </nav>
+</header>
+
+<main style="max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; display: flex; flex-direction: column; gap: 28px">
+
+  <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap">
+    <span class="lbl">SECURITY.md · jpadilla/pyjwt</span>
+    <div style="display: flex; gap: 20px; align-items: center">
+      <button type="button" class="link" aria-expanded="{{editOpen}}" onClick="{{toggleEdit}}">{{editLabel}}</button>
+      <button type="button" class="link">Run bundle (.zip)</button>
+      <button type="button" class="btn pri">SECURITY.md ↓</button>
+    </div>
+  </div>
+
+  <sc-if value="{{editing}}" hint-placeholder-val="{{ false }}">
+    <div style="display: flex; flex-direction: column; gap: 12px">
+      <label style="display: flex; flex-direction: column; gap: 6px"><span class="lbl">Synthesis prompt</span>
+        <textarea rows="8" style="width: 100%; background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font: inherit; font-size: 13px; line-height: 1.55; padding: 14px; resize: vertical" defaultValue="{{prompt}}"></textarea>
+      </label>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">
+        <span style="font-size: 12px; color: var(--ink-soft)">Reuses the 14 approved PRs. No classification is repeated.</span>
+        <button type="button" class="btn">Regenerate</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <article class="ms">
+    <h1>Security Policy</h1>
+    <h2>User Guideline</h2>
+
+    <sc-for list="{{topics}}" as="t" hint-placeholder-count="3">
+      <h3>{{t.title}}</h3>
+      <ul>
+        <sc-for list="{{t.recs}}" as="r" hint-placeholder-count="1">
+          <li>
+            <strong style="font-weight: 600">{{r.title}}.</strong> {{r.text}} (<sc-for list="{{r.cites}}" as="c" hint-placeholder-count="1"><button type="button" class="{{c.cls}}" aria-expanded="{{c.open}}" onClick="{{c.toggle}}">#{{c.id}}</button></sc-for>)
+            <sc-for list="{{r.opened}}" as="o" hint-placeholder-count="0">
+              <div style="margin: 8px 0 4px; padding: 8px 12px; border-left: 2px solid var(--line); color: var(--ink-soft); font-size: 13px; display: flex; flex-direction: column; gap: 4px"><span>{{o.text}}</span><a href="https://github.com/jpadilla/pyjwt/pull/{{o.id}}" style="font-size: 12px">Open #{{o.id}} on GitHub ↗</a></div>
+            </sc-for>
+          </li>
+        </sc-for>
+      </ul>
+    </sc-for>
+
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-soft); white-space: pre-line">Generated by ASGARD 0.1.0 on 2026-10-13 for jpadilla/pyjwt.
+Models: classifier ollama/llama3.1, evaluator gemini/gemini-2.5-flash, synthesizer ollama/llama3.1.
+Pull requests analysed: 200. Security pull requests used: 14.</div>
+  </article>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":1100}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { edit: false, open: '1188' }; }
+  renderVals() {
+    var self = this, s = this.state;
+    var EV = {
+      '1188': '“for a string that’s a substring test rather than membership” — description',
+      '1131': '“the header must never pick the verification algorithm” — general_discussion[1]',
+      '1185': '“an empty key makes every HS256 signature trivially forgeable” — review thread',
+      '977': 'Not in the approved security set. Kept as a link and reported as a citation warning.'
+    };
+    function rec(title, text, ids) {
+      return { title: title, text: text,
+        cites: ids.map(function (id) { var o = s.open === id; return { id: id, open: o ? 'true' : 'false', cls: id === '977' ? 'cite warn' : 'cite', toggle: function () { self.setState({ open: o ? null : id }); } }; }),
+        opened: ids.filter(function (i) { return i === s.open; }).map(function (i) { return { id: i, text: EV[i] }; }) };
+    }
+    return {
+      theme: this.props.theme ?? 'dark',
+      editing: s.edit, editOpen: s.edit ? 'true' : 'false', editLabel: s.edit ? 'Close prompt' : 'Edit prompt',
+      toggleEdit: function () { self.setState({ edit: !s.edit }); },
+      prompt: 'Based on the security classifications extracted from the following {repository}\nPull Request discussions, generate the User Guideline section for the\n{repository} repository’s security policy (SECURITY.md).\n\nThe final guideline must strictly avoid generic recommendations, focusing only\non the provided evidence.\n…',
+      topics: [
+        { title: 'Algorithm allow-lists', recs: [
+          rec('Pass algorithms as a list, never a bare string', 'On a string, the allow-list check becomes a substring test.', ['1188']),
+          rec('Let the caller choose the algorithm', 'The token header alone must not decide how it is verified.', ['1131'])] },
+        { title: 'Keys and secrets', recs: [
+          rec('Never use an empty HMAC key', 'It makes HS256 signatures forgeable.', ['1185'])] },
+        { title: 'Claim validation', recs: [
+          rec('Give iss as a string', 'A list issuer turns the comparison into a membership test.', ['977'])] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
