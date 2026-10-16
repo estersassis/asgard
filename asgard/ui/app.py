@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import queue
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -25,6 +27,7 @@ from asgard.core.config import (
     probe_run,
 )
 from asgard.core.pipeline import PIPELINE
+from asgard.prompts.synthesizer import SYSTEM_PROMPT
 from asgard.ui.session import RunSession, SessionStore
 
 # Allowlisted run-dir files served by the UI (relative to the run output dir).
@@ -37,6 +40,10 @@ _RUN_FILE_CLASSIFY_TRACE = "classify/trace.jsonl"
 _RUN_FILE_CLASSIFY_METRICS = "classify/metrics.json"
 _RUN_FILE_CLASSIFY_OUTPUT = "classify/output.json"
 _RUN_FILE_CLASSIFY_ITEMS = "classify/items.jsonl"
+_RUN_FILE_SECURITY_MD = "SECURITY.md"
+_RUN_FILE_CONSOLIDATE_OUTPUT = "consolidate/output.json"
+_RUN_FILE_SECURITY_MD_OUTPUT = "security_md/output.json"
+_RUN_FILE_SYNTHESIZE_PROMPT = "synthesize/system_prompt.txt"
 
 _UI_ROOT = Path(__file__).resolve().parent
 _ENV_PREFILL = (
@@ -69,8 +76,20 @@ class SetupParseBody(BaseModel):
 
 class ResumeRunBody(BaseModel):
     from_stage: str = Field(alias="from")
+    rerun: bool = False
 
     model_config = {"populate_by_name": True}
+
+
+class RegenerateBody(BaseModel):
+    from_stage: str = Field(default="synthesize", alias="from")
+    prompt: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class PromptBody(BaseModel):
+    text: str
 
 
 def create_app(
@@ -106,14 +125,29 @@ def create_app(
             raise HTTPException(status_code=404, detail="run not found")
         return session
 
-    def _run_file(session: RunSession, relative: str, media_type: str) -> FileResponse:
+    def _run_file(
+        session: RunSession,
+        relative: str,
+        media_type: str,
+        *,
+        filename: str | None = None,
+    ) -> FileResponse:
         if session.output_dir is None:
             raise HTTPException(status_code=404, detail="file not found")
         root = session.output_dir.resolve()
         path = (root / relative).resolve()
         if not path.is_relative_to(root) or not path.is_file():
             raise HTTPException(status_code=404, detail="file not found")
-        return FileResponse(path, media_type=media_type)
+        return FileResponse(path, media_type=media_type, filename=filename)
+
+    def _prompt_path(session: RunSession) -> Path:
+        if session.output_dir is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        root = session.output_dir.resolve()
+        path = (root / _RUN_FILE_SYNTHESIZE_PROMPT).resolve()
+        if not path.is_relative_to(root):
+            raise HTTPException(status_code=404, detail="file not found")
+        return path
 
     @app.get("/", response_class=HTMLResponse)
     @app.get("/setup", response_class=HTMLResponse, name="setup")
@@ -142,7 +176,11 @@ def create_app(
 
     @app.get("/guideline", response_class=HTMLResponse, name="guideline")
     async def guideline(request: Request) -> HTMLResponse:
-        return _screen(request, "guideline", "IV", "Guideline")
+        return templates.TemplateResponse(
+            request,
+            "guideline.html",
+            {"screen": "guideline", "theme": _theme(request)},
+        )
 
     @app.get("/forge", response_class=HTMLResponse, name="forge")
     async def forge(request: Request) -> HTMLResponse:
@@ -228,7 +266,21 @@ def create_app(
             raise HTTPException(status_code=400, detail=f"unknown stage: {body.from_stage}")
         try:
             session.join(timeout=30)
-            output_dir = session.resume(body.from_stage)
+            output_dir = session.resume(body.from_stage, rerun=body.rerun)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": run_id, "output_dir": str(output_dir)}
+
+    @app.post("/api/runs/{run_id}/regenerate")
+    async def regenerate_run(run_id: str, body: RegenerateBody) -> dict[str, str]:
+        session = store.get(run_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if body.from_stage not in PIPELINE:
+            raise HTTPException(status_code=400, detail=f"unknown stage: {body.from_stage}")
+        try:
+            session.join(timeout=30)
+            output_dir = session.regenerate_from(body.from_stage, prompt=body.prompt)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"id": run_id, "output_dir": str(output_dir)}
@@ -342,6 +394,67 @@ def create_app(
             _session_or_404(run_id),
             _RUN_FILE_CLASSIFY_ITEMS,
             "text/plain",
+        )
+
+    @app.get("/api/runs/{run_id}/SECURITY.md")
+    async def run_security_md(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_SECURITY_MD,
+            "text/markdown",
+            filename="SECURITY.md",
+        )
+
+    @app.get("/api/runs/{run_id}/consolidate/output")
+    async def run_consolidate_output(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_CONSOLIDATE_OUTPUT,
+            "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/security_md/output")
+    async def run_security_md_output(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_SECURITY_MD_OUTPUT,
+            "application/json",
+        )
+
+    @app.get("/api/runs/{run_id}/synthesize/prompt")
+    async def run_synthesize_prompt(run_id: str) -> PlainTextResponse:
+        session = _session_or_404(run_id)
+        path = _prompt_path(session)
+        text = path.read_text(encoding="utf-8") if path.is_file() else SYSTEM_PROMPT
+        return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+
+    @app.put("/api/runs/{run_id}/synthesize/prompt")
+    async def put_synthesize_prompt(run_id: str, body: PromptBody) -> dict[str, str]:
+        session = _session_or_404(run_id)
+        path = _prompt_path(session)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body.text, encoding="utf-8")
+        return {"path": _RUN_FILE_SYNTHESIZE_PROMPT}
+
+    @app.get("/api/runs/{run_id}/bundle.zip")
+    async def run_bundle_zip(run_id: str) -> Response:
+        session = _session_or_404(run_id)
+        if session.output_dir is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        root = session.output_dir.resolve()
+        if not root.is_dir():
+            raise HTTPException(status_code=404, detail="file not found")
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(root.rglob("*")):
+                if not path.is_file():
+                    continue
+                relative = path.resolve().relative_to(root)
+                archive.write(path, relative.as_posix())
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="bundle.zip"'},
         )
 
     return app

@@ -73,7 +73,7 @@ class SynthesizeStage(Stage):
         if not records:
             return _EMPTY
         allowed = {record["pr_id"] for record in records}
-        messages = build_messages(self.repo, records)
+        messages = build_messages(self.repo, records, system_prompt=_override(ctx))
         response = self.factory.generate("synthesizer", messages, schema=Synthesis)
         ctx.emit(SynthesisChunk(text=response.text))
         guideline = _guideline(response.parsed)
@@ -92,6 +92,13 @@ class SynthesizeStage(Stage):
             if _outside(guideline, allowed):
                 raise ConfigError(_OUTSIDE)
         return _markdown(self.repo, guideline)
+
+
+def _override(ctx: RunContext) -> str | None:
+    path = ctx.run_dir / "synthesize" / "system_prompt.txt"
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
 
 
 def _records(data: Any) -> list[dict[str, Any]]:
