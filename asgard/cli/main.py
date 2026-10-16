@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from asgard.cli.logs import show_logs
+from asgard.cli.prompts import list_prompts, save_prompt
 from asgard.core.config import ConfigError, RunConfig, prepare_run
 from asgard.core.pipeline import PIPELINE, run_pipeline
 from asgard.core.sinks import CLIProgressSink, LoggingSink, StreamJSONSink
@@ -31,6 +32,9 @@ def main(
             return
         if args.command == "logs":
             show_logs(args.run_dir, follow=args.follow, stage=args.stage)
+            return
+        if args.command == "prompts":
+            _run_prompts(args)
             return
         if args.command == "ui":
             try:
@@ -56,12 +60,28 @@ def main(
             quiet=args.quiet,
             json_logs=args.json_logs,
         )
-    except (ConfigError, ValidationError, ValueError) as exc:
+    except (ConfigError, ValidationError, ValueError, LookupError) as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
     except Exception as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(1) from None
+
+
+def _run_prompts(args: argparse.Namespace) -> None:
+    if args.prompts_command == "list":
+        list_prompts(role=args.role, registry_dir=args.registry_dir)
+        return
+    if args.prompts_command == "save":
+        save_prompt(
+            role=args.role,
+            name=args.name,
+            file=args.file,
+            notes=args.notes or "",
+            registry_dir=args.registry_dir,
+        )
+        return
+    raise SystemExit(2)
 
 
 def _run_pipeline(
@@ -164,6 +184,34 @@ def _parser() -> argparse.ArgumentParser:
     ui = sub.add_parser("ui", help="open the web UI (requires asgard[ui])")
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=8000)
+    prompts = sub.add_parser("prompts", help="list or save versioned system prompts")
+    prompts_sub = prompts.add_subparsers(dest="prompts_command", required=True)
+    prompts_list = prompts_sub.add_parser("list", help="list prompt versions")
+    prompts_list.add_argument(
+        "--role",
+        choices=_ROLES,
+        help="list one role; omit to list all",
+    )
+    prompts_list.add_argument(
+        "--registry-dir",
+        type=Path,
+        help="prompt registry root (default: ASGARD_PROMPTS_DIR or ~/.asgard/prompts)",
+    )
+    prompts_save = prompts_sub.add_parser("save", help="save a prompt version from a file")
+    prompts_save.add_argument("--role", required=True, choices=_ROLES)
+    prompts_save.add_argument("--name", required=True, help="display name (id is slugified)")
+    prompts_save.add_argument("--notes", default="", help="optional notes stored with the version")
+    prompts_save.add_argument(
+        "--file",
+        type=Path,
+        required=True,
+        help="file whose contents become the prompt body",
+    )
+    prompts_save.add_argument(
+        "--registry-dir",
+        type=Path,
+        help="prompt registry root (default: ASGARD_PROMPTS_DIR or ~/.asgard/prompts)",
+    )
     return parser
 
 

@@ -215,9 +215,42 @@ def _pull_numbers(ctx: RunContext, pr_ids: list[str]) -> dict[str, str]:
         if number is None:
             raise ConfigError("classified pull requests do not match the mined set")
         resolved[pr_id] = number
-    if set(resolved.values()) != set(by_key.values()):
+    if set(resolved.values()) != _expected_numbers(ctx, by_key):
         raise ConfigError("classified pull requests do not match the mined set")
     return resolved
+
+
+def _expected_numbers(ctx: RunContext, by_key: dict[str, str]) -> set[str]:
+    """Numbers classify should cover: prefilter kept set, else the full mine set."""
+    path = ctx.run_dir / "prefilter" / "output.json"
+    if not path.is_file():
+        return set(by_key.values())
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise ConfigError("prefilter output is invalid") from None
+    if not isinstance(data, list):
+        raise ConfigError("prefilter output is invalid")
+    expected: set[str] = set()
+    for item in data:
+        pr_id = _prefilter_pr_id(item)
+        number = by_key.get(pr_id)
+        if number is None:
+            raise ConfigError("classified pull requests do not match the mined set")
+        expected.add(number)
+    return expected
+
+
+def _prefilter_pr_id(item: Any) -> str:
+    if not isinstance(item, dict):
+        raise ConfigError("prefilter output is invalid")
+    context = item.get("context")
+    if not isinstance(context, dict):
+        raise ConfigError("prefilter output is invalid")
+    pr_id = context.get("pr_id")
+    if not isinstance(pr_id, str) or not pr_id:
+        raise ConfigError("prefilter output is invalid")
+    return pr_id
 
 
 def _node_id(path: Path) -> str | None:
