@@ -509,12 +509,13 @@ def test_council_file_endpoints(
     api_pr = client.get(f"/api/runs/{run_id}/mine/prs/{pr_number}")
     assert api_pr.status_code == 200
     assert api_pr.json() == disk_pr
-    assert "node_id" in api_pr.json()
+    assert "id" in api_pr.json()
+    assert api_pr.json()["number"] == pr_number
 
-    bad_pr = client.get(f"/api/runs/{run_id}/mine/prs/../output")
-    assert bad_pr.status_code == 404
     not_digit = client.get(f"/api/runs/{run_id}/mine/prs/abc")
     assert not_digit.status_code == 404
+    traversal = client.get(f"/api/runs/{run_id}/mine/prs/..")
+    assert traversal.status_code == 404
 
     disk_trace = (out / "classify" / "trace.jsonl").read_text(encoding="utf-8")
     api_trace = client.get(f"/api/runs/{run_id}/classify/trace")
