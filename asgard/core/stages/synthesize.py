@@ -1,11 +1,13 @@
 """Turn consolidated security discussions into the User Guideline."""
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from asgard.core.config import ConfigError
 from asgard.core.events import SynthesisChunk
+from asgard.core.prompt_registry import resolve_system_prompt
 from asgard.core.stage import RunContext, Stage
 from asgard.prompts.synthesizer import build_messages
 from asgard.providers.factory import LLMFactory
@@ -73,7 +75,11 @@ class SynthesizeStage(Stage):
         if not records:
             return _EMPTY
         allowed = {record["pr_id"] for record in records}
-        messages = build_messages(self.repo, records, system_prompt=_override(ctx))
+        try:
+            prompt = resolve_system_prompt("synthesizer", _run_config(ctx), ctx.run_dir)
+        except LookupError as exc:
+            raise ConfigError(str(exc)) from None
+        messages = build_messages(self.repo, records, system_prompt=prompt)
         response = self.factory.generate("synthesizer", messages, schema=Synthesis)
         ctx.emit(SynthesisChunk(text=response.text))
         guideline = _guideline(response.parsed)
@@ -94,11 +100,17 @@ class SynthesizeStage(Stage):
         return _markdown(self.repo, guideline)
 
 
-def _override(ctx: RunContext) -> str | None:
-    path = ctx.run_dir / "synthesize" / "system_prompt.txt"
+def _run_config(ctx: RunContext) -> dict[str, Any] | None:
+    path = ctx.run_dir / "config.json"
     if not path.is_file():
         return None
-    return path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise ConfigError("run configuration is invalid") from None
+    if not isinstance(data, dict):
+        raise ConfigError("run configuration is invalid")
+    return data
 
 
 def _records(data: Any) -> list[dict[str, Any]]:

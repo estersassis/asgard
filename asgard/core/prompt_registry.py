@@ -137,6 +137,46 @@ def content_sha256(body: str) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
 
+def resolve_system_prompt(role: str, config: object | None, run_dir: Path) -> str:
+    """Return the active system prompt body for ``role``.
+
+    Precedence:
+    - synthesizer: ``synthesize/system_prompt.txt`` → registry selection → built-in
+    - classifier / evaluator: registry selection → built-in
+
+    ``config`` may be a ``RunConfig``, a redacted config dict, or ``None`` (defaults).
+    """
+    _check_role(role)
+    if role == "synthesizer":
+        override = Path(run_dir) / "synthesize" / "system_prompt.txt"
+        if override.is_file():
+            return override.read_text(encoding="utf-8")
+    version_id, registry_dir = _selection(config, role)
+    root = Path(registry_dir) if registry_dir is not None else default_registry_root()
+    return PromptRegistry(root).resolve(role, version_id)
+
+
+def _selection(config: object | None, role: str) -> tuple[str, Path | None]:
+    if config is None:
+        return _DEFAULT_ID, None
+    prompts = getattr(config, "prompts", None)
+    if prompts is None and isinstance(config, dict):
+        prompts = config.get("prompts")
+    if prompts is None:
+        return _DEFAULT_ID, None
+    if isinstance(prompts, dict):
+        raw_id = prompts.get(role, _DEFAULT_ID)
+        version_id = _DEFAULT_ID if raw_id is None else str(raw_id).strip() or _DEFAULT_ID
+        raw_dir = prompts.get("registry_dir")
+        registry_dir = Path(raw_dir) if raw_dir else None
+        return version_id, registry_dir
+    version_id = str(getattr(prompts, role, _DEFAULT_ID) or _DEFAULT_ID)
+    registry_dir = getattr(prompts, "registry_dir", None)
+    if registry_dir is not None:
+        registry_dir = Path(registry_dir)
+    return version_id, registry_dir
+
+
 def _check_role(role: str) -> None:
     if role not in ROLES:
         raise ValueError(f"unknown prompt role: {role}")

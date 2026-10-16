@@ -30,6 +30,7 @@ from asgard.core.events import (
     LoopFinished,
 )
 from asgard.core.normalization import NormalizedPullRequest
+from asgard.core.prompt_registry import resolve_system_prompt
 from asgard.core.stage import RunContext, Stage
 from asgard.prompts.classifier import build_batch_messages as classifier_batch_messages
 from asgard.prompts.evaluator import build_batch_messages as evaluator_batch_messages
@@ -151,8 +152,16 @@ class ClassifyStage(Stage):
         self.batch_max_chars = batch_max_chars
         self._log = _TraceLog()
         self._traced = _RecordingFactory(factory, self._log)
+        self._classifier_prompt: str | None = None
+        self._evaluator_prompt: str | None = None
 
     def execute(self, ctx: RunContext, data: Any) -> list[dict[str, Any]]:
+        config = _run_config(ctx)
+        try:
+            self._classifier_prompt = resolve_system_prompt("classifier", config, ctx.run_dir)
+            self._evaluator_prompt = resolve_system_prompt("evaluator", config, ctx.run_dir)
+        except LookupError as exc:
+            raise ConfigError(str(exc)) from None
         pulls = _pulls(data)
         if self.batch_size == 1:
             payloads = self._run_singly(ctx, pulls)
@@ -266,6 +275,7 @@ class ClassifyStage(Stage):
                 emit=ctx.emit,
                 previous=review.previous,
                 feedback=review.feedback,
+                system_prompt=self._classifier_prompt,
             )
         except _CAUGHT:
             review.traces.extend(self._log.lines)
@@ -364,7 +374,13 @@ class ClassifyStage(Stage):
         self._log.pr_ids = None
         self._log.lines = []
         try:
-            reviewed = evaluate(review.pull, classification, self._traced, emit=ctx.emit)
+            reviewed = evaluate(
+                review.pull,
+                classification,
+                self._traced,
+                emit=ctx.emit,
+                system_prompt=self._evaluator_prompt,
+            )
         except _CAUGHT:
             review.traces.extend(self._log.lines)
             review.status = "error"
@@ -419,6 +435,7 @@ class ClassifyStage(Stage):
                     emit=ctx.emit,
                     previous=previous,
                     feedback=feedback,
+                    system_prompt=self._classifier_prompt,
                 )
             except _CAUGHT:
                 iterations = iteration
@@ -431,7 +448,13 @@ class ClassifyStage(Stage):
             classification = arrived
             try:
                 before = len(self._log.lines)
-                reviewed = evaluate(pull, classification, self._traced, emit=ctx.emit)
+                reviewed = evaluate(
+                    pull,
+                    classification,
+                    self._traced,
+                    emit=ctx.emit,
+                    system_prompt=self._evaluator_prompt,
+                )
             except _CAUGHT:
                 status = "error"
                 break
@@ -470,7 +493,9 @@ class ClassifyStage(Stage):
             provider=spec.provider,
             model=spec.model,
             temperature=spec.temperature,
-            prompt_sha256=_prompt_sha256(build_messages(pull, classification)),
+            prompt_sha256=_prompt_sha256(
+                build_messages(pull, classification, system_prompt=self._evaluator_prompt)
+            ),
             raw_response=None,
             parsed=evaluation.model_dump(mode="json"),
             input_tokens=None,
@@ -478,6 +503,19 @@ class ClassifyStage(Stage):
             latency_s=None,
             error=None,
         )
+
+
+def _run_config(ctx: RunContext) -> dict[str, Any] | None:
+    path = ctx.run_dir / "config.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise ConfigError("run configuration is invalid") from None
+    if not isinstance(data, dict):
+        raise ConfigError("run configuration is invalid")
+    return data
 
 
 def _pulls(data: Any) -> list[NormalizedPullRequest]:
