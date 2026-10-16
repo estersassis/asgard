@@ -118,6 +118,8 @@ def test_text_label_or_path_keeps_the_pull(tmp_path: Path) -> None:
         _pull("description", description="Check the password hash."),
         _pull("discussion", discussion=["This looks like XSS."]),
         _pull("review", comments=["Please sanitiz the input."]),
+        _pull("escape", discussion=["Needs an escapeseq filter."]),
+        _pull("pickle", title="Stop pickling cache values"),
         _pull("label-name"),
         _pull("label-string"),
         _pull("filename"),

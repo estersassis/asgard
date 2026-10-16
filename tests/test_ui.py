@@ -323,6 +323,231 @@ def test_shell_and_themes() -> None:
         assert not _TOKEN_HEX.search(text), path
 
 
+def test_pipeline_page_assets() -> None:
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+
+    page = client.get("/pipeline")
+    assert page.status_code == 200
+    assert "ASGARD" in page.text
+    assert "II</span>Pipeline" in page.text
+    assert "/static/css/pipeline.css" in page.text
+    assert "/static/js/pipeline.js" in page.text
+    assert 'data-theme="light"' not in page.text
+    assert not _TOKEN_HEX.search(page.text)
+
+    light = client.get("/pipeline?theme=light")
+    assert light.status_code == 200
+    assert 'data-theme="light"' in light.text
+
+    css = client.get("/static/css/pipeline.css")
+    assert css.status_code == 200
+    assert ".stage" in css.text
+    assert "var(--ember)" in css.text or "var(--bifrost)" in css.text
+
+    js = client.get("/static/js/pipeline.js")
+    assert js.status_code == 200
+    assert "/api/runs/" in js.text
+    assert "/events" in js.text
+    assert "/log" in js.text
+    assert "/council?run=" in js.text
+
+
+def test_council_page_assets() -> None:
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+
+    page = client.get("/council")
+    assert page.status_code == 200
+    assert "ASGARD" in page.text
+    assert "III</span>Council" in page.text
+    assert "The <em>council</em>" in page.text
+    assert "/static/css/council.css" in page.text
+    assert "/static/js/council.js" in page.text
+    assert 'id="council"' in page.text
+    assert 'data-run="' in page.text
+    assert 'id="council-security"' in page.text
+    assert 'id="council-not-security"' in page.text
+    assert 'id="council-unresolved"' in page.text
+    assert 'id="council-loop"' in page.text
+    assert 'aria-label="Pull requests"' in page.text
+    assert 'aria-label="Deliberation"' in page.text
+    assert 'data-theme="light"' not in page.text
+    assert not _TOKEN_HEX.search(page.text)
+
+    with_run = client.get("/council?run=abc123")
+    assert with_run.status_code == 200
+    assert 'data-run="abc123"' in with_run.text
+
+    light = client.get("/council?theme=light")
+    assert light.status_code == 200
+    assert 'data-theme="light"' in light.text
+
+    css = client.get("/static/css/council.css")
+    assert css.status_code == 200
+    assert "1080px" in css.text
+    assert ".pr" in css.text
+    assert ".dot" in css.text
+    assert ".dot.live" in css.text
+    assert "@keyframes pulse" in css.text
+    assert "var(--ember-hi)" in css.text
+    assert "var(--bifrost)" in css.text
+
+    js = client.get("/static/js/council.js")
+    assert js.status_code == 200
+    assert "EventSource" in js.text
+    assert "/events" in js.text
+    assert "ClassificationAttempt" in js.text
+    assert "EvaluatorVerdict" in js.text
+    assert "LoopFinished" in js.text
+    assert "/classify/trace" in js.text
+    assert "/classify/metrics" in js.text
+    assert "/classify/output" in js.text
+    assert "/classify/items" in js.text
+    assert "/prefilter/output" in js.text
+    assert "/mine/output" in js.text
+    assert "/mine/prs/" in js.text
+    assert '"why"' in js.text or "why" in js.text
+    assert '"hide"' in js.text or "hide" in js.text
+
+
+def test_pipeline_log_config_and_removed_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numbers = _numbers()
+    security = numbers[0]
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    out = tmp_path / "out"
+    source = _settings(tmp_path, out)
+    app = create_app(
+        opener=_opener(numbers),
+        handlers={"fake": _handler(security)},
+        dotenv=None,
+    )
+    client = TestClient(app)
+
+    missing = client.get("/api/runs/missing/log")
+    assert missing.status_code == 404
+
+    response = client.post("/api/runs", json={"config": str(source)})
+    assert response.status_code == 200, response.text
+    run_id = response.json()["id"]
+    status = _wait_done(client, run_id)
+    assert status["error"] is None
+
+    disk_log = (out / "events.jsonl").read_text(encoding="utf-8")
+    api_log = client.get(f"/api/runs/{run_id}/log")
+    assert api_log.status_code == 200
+    assert "text/plain" in api_log.headers.get("content-type", "")
+    assert api_log.text == disk_log
+    assert "StageStarted" in api_log.text
+    assert "ClassifyProgress" in api_log.text
+    disk_events = _events(out / "events.jsonl")
+    api_events = [
+        {key: value for key, value in json.loads(line).items() if key != "at"}
+        for line in api_log.text.splitlines()
+        if line
+    ]
+    assert api_events == disk_events
+    assert {"type": "StageStarted", "stage": "mine", "total": None} in api_events
+    assert any(event["type"] == "ClassifyProgress" for event in api_events)
+
+    disk_config = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    api_config = client.get(f"/api/runs/{run_id}/config")
+    assert api_config.status_code == 200
+    assert api_config.json() == disk_config
+    assert api_config.json()["repo"] == "jpadilla/pyjwt"
+    assert "prefilter" in api_config.json()
+
+    removed_path = out / "prefilter" / "removed.json"
+    assert removed_path.is_file()
+    disk_removed = json.loads(removed_path.read_text(encoding="utf-8"))
+    api_removed = client.get(f"/api/runs/{run_id}/prefilter/removed")
+    assert api_removed.status_code == 200
+    assert api_removed.json() == disk_removed
+    assert {"before", "after", "removed"} <= set(api_removed.json())
+
+
+def test_council_file_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numbers = _numbers()
+    security = numbers[0]
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    out = tmp_path / "out"
+    source = _settings(tmp_path, out)
+    app = create_app(
+        opener=_opener(numbers),
+        handlers={"fake": _handler(security)},
+        dotenv=None,
+    )
+    client = TestClient(app)
+
+    missing = client.get("/api/runs/missing/classify/output")
+    assert missing.status_code == 404
+
+    response = client.post("/api/runs", json={"config": str(source)})
+    assert response.status_code == 200, response.text
+    run_id = response.json()["id"]
+    status = _wait_done(client, run_id)
+    assert status["error"] is None
+
+    disk_prefilter = json.loads((out / "prefilter" / "output.json").read_text(encoding="utf-8"))
+    api_prefilter = client.get(f"/api/runs/{run_id}/prefilter/output")
+    assert api_prefilter.status_code == 200
+    assert api_prefilter.json() == disk_prefilter
+
+    disk_mine = json.loads((out / "mine" / "output.json").read_text(encoding="utf-8"))
+    api_mine = client.get(f"/api/runs/{run_id}/mine/output")
+    assert api_mine.status_code == 200
+    assert api_mine.json() == disk_mine
+    assert isinstance(disk_mine, list) and disk_mine
+    pr_number = disk_mine[0]
+    disk_pr = json.loads((out / "mine" / "prs" / f"{pr_number}.json").read_text(encoding="utf-8"))
+    api_pr = client.get(f"/api/runs/{run_id}/mine/prs/{pr_number}")
+    assert api_pr.status_code == 200
+    assert api_pr.json() == disk_pr
+    assert "id" in api_pr.json()
+    assert api_pr.json()["number"] == pr_number
+
+    not_digit = client.get(f"/api/runs/{run_id}/mine/prs/abc")
+    assert not_digit.status_code == 404
+    traversal = client.get(f"/api/runs/{run_id}/mine/prs/..")
+    assert traversal.status_code == 404
+
+    disk_trace = (out / "classify" / "trace.jsonl").read_text(encoding="utf-8")
+    api_trace = client.get(f"/api/runs/{run_id}/classify/trace")
+    assert api_trace.status_code == 200
+    assert "text/plain" in api_trace.headers.get("content-type", "")
+    assert api_trace.text == disk_trace
+
+    disk_items = (out / "classify" / "items.jsonl").read_text(encoding="utf-8")
+    api_items = client.get(f"/api/runs/{run_id}/classify/items")
+    assert api_items.status_code == 200
+    assert "text/plain" in api_items.headers.get("content-type", "")
+    assert api_items.text == disk_items
+
+    disk_metrics = json.loads((out / "classify" / "metrics.json").read_text(encoding="utf-8"))
+    api_metrics = client.get(f"/api/runs/{run_id}/classify/metrics")
+    assert api_metrics.status_code == 200
+    assert api_metrics.json() == disk_metrics
+    assert {
+        "approval_rate_iteration_1",
+        "approval_rate_final",
+        "mean_iterations",
+    } <= set(api_metrics.json())
+
+    disk_output = json.loads((out / "classify" / "output.json").read_text(encoding="utf-8"))
+    api_output = client.get(f"/api/runs/{run_id}/classify/output")
+    assert api_output.status_code == 200
+    assert api_output.json() == disk_output
+    assert isinstance(api_output.json(), list)
+    assert api_output.json()
+    assert {"pr_id", "status", "classification"} <= set(api_output.json()[0])
+
+
 def test_stop_and_resume_from_stage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -395,6 +620,11 @@ def test_stop_and_resume_from_stage(
     assert status["error"] == "run stopped"
     assert not (out / "bundle" / "output.json").exists()
 
+    mine_output = out / "mine" / "output.json"
+    assert mine_output.is_file()
+    mine_before = mine_output.read_text(encoding="utf-8")
+    mine_mtime = mine_output.stat().st_mtime_ns
+
     # Finish the interrupted classify item work that may have completed, then resume.
     if (out / "classify" / "output.json").exists():
         from_stage = "consolidate"
@@ -415,6 +645,10 @@ def test_stop_and_resume_from_stage(
     assert status["error"] is None
     assert (out / "SECURITY.md").is_file()
     assert (out / "manifest.json").is_file()
+    # Resume from a later stage must not re-mine; PR list and file stay untouched.
+    assert from_stage != "mine"
+    assert mine_output.read_text(encoding="utf-8") == mine_before
+    assert mine_output.stat().st_mtime_ns == mine_mtime
 
 
 def test_setup_env_prefills_from_dotenv(

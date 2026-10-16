@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}ASGARD · Council{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', path='css/council.css') }}">
+{% endblock %}
+{% block page_class %} council-page{% endblock %}
+{% block content %}
+  <div class="council" id="council" data-run="{{ request.query_params.get('run', '') }}">
+    <div class="council-hero">
+      <div class="council-hero-row">
+        <h1 class="serif council-title">The <em>council</em></h1>
+        <div class="council-totals" aria-label="Totals">
+          <div class="council-total">
+            <span class="serif council-total-n is-security" id="council-security">—</span>
+            <span class="lbl">security</span>
+          </div>
+          <div class="council-total">
+            <span class="serif council-total-n" id="council-not-security">—</span>
+            <span class="lbl">not security</span>
+          </div>
+          <div class="council-total">
+            <span class="serif council-total-n is-unresolved" id="council-unresolved">—</span>
+            <span class="lbl">unresolved</span>
+          </div>
+        </div>
+      </div>
+      <p class="council-loop" id="council-loop" hidden>
+        Approved on round I <span class="council-loop-val" id="council-rate-i">—</span>
+        → final <span class="council-loop-val" id="council-rate-final">—</span>
+        · mean <span class="council-loop-val" id="council-mean">—</span> rounds
+      </p>
+    </div>
+
+    <div class="council-columns">
+      <section class="council-prs" aria-label="Pull requests" id="council-prs"></section>
+
+      <section class="council-deliberation" aria-label="Deliberation" id="council-deliberation">
+        <div class="council-selected">
+          <span class="lbl council-status" id="council-status"></span>
+          <h2 class="serif council-pr-title" id="council-pr-title"></h2>
+        </div>
+
+        <p class="council-waiting" id="council-waiting" hidden>
+          <span class="dot live is-classifying" aria-hidden="true"></span>
+          The classifier is reading this pull request…
+        </p>
+        <p class="council-error" id="council-error" hidden></p>
+
+        <ol class="council-rounds" id="council-rounds"></ol>
+      </section>
+    </div>
+  </div>
+
+  <template id="council-pr-template">
+    <button type="button" class="pr" aria-pressed="false">
+      <span class="dot" data-dot></span>
+      <span class="pr-id" data-id></span>
+      <span class="pr-title" data-title></span>
+      <span class="pr-short" data-short></span>
+    </button>
+  </template>
+
+  <template id="council-round-template">
+    <li class="council-round">
+      <span class="serif council-round-n" data-n></span>
+      <div class="council-round-body">
+        <div class="council-classifier">
+          <span class="lbl council-classifier-lbl" data-decision></span>
+          <p class="serif council-quote" data-quote hidden></p>
+        </div>
+        <div class="council-evaluator">
+          <span class="lbl" data-verdict></span>
+          <div class="council-findings" data-findings hidden>
+            <div class="council-finding-marks" data-marks></div>
+            <button type="button" class="link council-why" data-why aria-expanded="false">why</button>
+          </div>
+          <ul class="council-why-list" data-why-list hidden></ul>
+          <p class="council-feedback" data-feedback hidden></p>
+        </div>
+      </div>
+    </li>
+  </template>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', path='js/council.js') }}" defer></script>
+{% endblock %}
