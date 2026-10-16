@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -25,7 +25,12 @@ from asgard.core.config import (
     probe_run,
 )
 from asgard.core.pipeline import PIPELINE
-from asgard.ui.session import SessionStore
+from asgard.ui.session import RunSession, SessionStore
+
+# Allowlisted run-dir files served by the UI (relative to the run output dir).
+_RUN_FILE_LOG = "events.jsonl"
+_RUN_FILE_CONFIG = "config.json"
+_RUN_FILE_PREFILTER_REMOVED = "prefilter/removed.json"
 
 _UI_ROOT = Path(__file__).resolve().parent
 _ENV_PREFILL = (
@@ -89,6 +94,21 @@ def create_app(
             },
         )
 
+    def _session_or_404(run_id: str) -> RunSession:
+        session = store.get(run_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return session
+
+    def _run_file(session: RunSession, relative: str, media_type: str) -> FileResponse:
+        if session.output_dir is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        root = session.output_dir.resolve()
+        path = (root / relative).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        return FileResponse(path, media_type=media_type)
+
     @app.get("/", response_class=HTMLResponse)
     @app.get("/setup", response_class=HTMLResponse, name="setup")
     async def setup(request: Request) -> HTMLResponse:
@@ -100,7 +120,11 @@ def create_app(
 
     @app.get("/pipeline", response_class=HTMLResponse, name="pipeline")
     async def pipeline(request: Request) -> HTMLResponse:
-        return _screen(request, "pipeline", "II", "Pipeline")
+        return templates.TemplateResponse(
+            request,
+            "pipeline.html",
+            {"screen": "pipeline", "theme": _theme(request)},
+        )
 
     @app.get("/council", response_class=HTMLResponse, name="council")
     async def council(request: Request) -> HTMLResponse:
@@ -228,15 +252,29 @@ def create_app(
 
     @app.get("/api/runs/{run_id}")
     async def run_status(run_id: str) -> dict[str, Any]:
-        session = store.get(run_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="run not found")
+        session = _session_or_404(run_id)
         return {
             "id": session.id,
             "running": session.running,
             "output_dir": str(session.output_dir) if session.output_dir else None,
             "error": session.error,
         }
+
+    @app.get("/api/runs/{run_id}/log")
+    async def run_log(run_id: str) -> FileResponse:
+        return _run_file(_session_or_404(run_id), _RUN_FILE_LOG, "text/plain")
+
+    @app.get("/api/runs/{run_id}/config")
+    async def run_config(run_id: str) -> FileResponse:
+        return _run_file(_session_or_404(run_id), _RUN_FILE_CONFIG, "application/json")
+
+    @app.get("/api/runs/{run_id}/prefilter/removed")
+    async def run_prefilter_removed(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_PREFILTER_REMOVED,
+            "application/json",
+        )
 
     return app
 

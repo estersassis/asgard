@@ -1,0 +1,197 @@
+/* Pipeline screen — stage rows from docs/ui/DESIGN.md § II */
+
+.pipeline-page {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.pipeline-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pipeline-status {
+  color: var(--ink-soft);
+}
+
+.pipeline-status.is-stopped {
+  color: var(--no);
+}
+
+.pipeline-status.is-running.live {
+  color: var(--ink-soft);
+}
+
+.pipeline-repo {
+  margin: 0;
+  font-weight: 300;
+  font-size: 44px;
+  line-height: 1.1;
+}
+
+.pipeline-repo em {
+  font-style: italic;
+  color: var(--ember);
+}
+
+.pipeline-stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.stage-row {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.stage-num {
+  width: 40px;
+  font-size: 18px;
+  color: var(--ink-soft);
+}
+
+.stage-name {
+  flex: 1;
+  color: var(--ink-soft);
+}
+
+.stage-detail {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.stage[data-state="running"] .stage-num,
+.stage[data-state="done"] .stage-num,
+.stage[data-state="skipped"] .stage-num,
+.stage[data-state="stopped"] .stage-num {
+  color: var(--ember);
+}
+
+.stage[data-state="running"] .stage-name,
+.stage[data-state="done"] .stage-name,
+.stage[data-state="skipped"] .stage-name,
+.stage[data-state="stopped"] .stage-name {
+  color: var(--ink);
+}
+
+.stage[data-state="done"] .stage-detail,
+.stage[data-state="skipped"] .stage-detail {
+  color: var(--yes);
+}
+
+.stage[data-state="running"] .stage-detail {
+  color: var(--ember-hi);
+}
+
+.stage[data-state="stopped"] .stage-detail {
+  color: var(--no);
+}
+
+.stage-note {
+  margin-left: 56px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.stage-note.is-rate-limit {
+  color: var(--bifrost);
+}
+
+.stage-bar {
+  margin-left: 56px;
+  height: 2px;
+  background: var(--line);
+}
+
+.stage-bar-fill {
+  width: 0;
+  height: 100%;
+  background: var(--ember);
+}
+
+.stage-bar.is-indeterminate .stage-bar-fill {
+  width: 100%;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.live {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.pipeline-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.pipeline-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pipeline-error-msg {
+  color: var(--no);
+}
+
+.pipeline-error .link {
+  color: var(--ink);
+}
+
+.pipeline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.pipeline-links {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.pipeline-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 640px) {
+  .pipeline-repo {
+    font-size: 36px;
+  }
+}
