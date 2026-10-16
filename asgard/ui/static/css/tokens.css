@@ -1,0 +1,29 @@
+/* Design tokens from docs/ui/DESIGN.md. Dark default; light via data-theme="light". */
+
+.ag {
+  --stone: #191B1F;
+  --panel: #202327;
+  --ink: #E8E6D9;
+  --ink-soft: #8D9082;
+  --line: #2C2F2A;
+  --ember: #D68C42;
+  --ember-hi: #F0AC63;
+  --bifrost: #6FA8C7;
+  --yes: #6FB981;
+  --no: #D97862;
+  --on-ember: #1A1408;
+}
+
+.ag[data-theme="light"] {
+  --stone: #E3E1D4;
+  --panel: #EDEBDE;
+  --ink: #23261F;
+  --ink-soft: #55584C;
+  --line: #C6C4B2;
+  --ember: #A8652A;
+  --ember-hi: #8C551E;
+  --bifrost: #3C6E8C;
+  --yes: #3F7A50;
+  --no: #A8432F;
+  --on-ember: #FFF8EE;
+}

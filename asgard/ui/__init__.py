@@ -1,1 +1,1 @@
-"""Web/TUI placeholder."""
+"""Web UI. Transport only — no pipeline business rules."""

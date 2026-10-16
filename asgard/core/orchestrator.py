@@ -1,5 +1,6 @@
 """Runs pipeline stages in order and forwards their events to sinks."""
 
+from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ class Orchestrator:
         only: str | None = None,
         start: str | None = None,
         data: Any = None,
+        cancel: Callable[[], bool] | None = None,
     ) -> Any:
         """Run the pipeline, one stage, or from ``start`` through the end.
 
@@ -48,7 +50,7 @@ class Orchestrator:
             for sink in self.sinks:
                 if hasattr(sink, "__enter__"):
                     stack.enter_context(sink)
-            ctx = RunContext(run_dir, self.emit)
+            ctx = RunContext(run_dir, self.emit, cancel=cancel)
             if index > 0:
                 pending = next(
                     (stage.name for stage in self.stages[:index] if not stage.is_done(ctx)),

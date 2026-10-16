@@ -8,8 +8,9 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2", "rich", "google-genai", "openai", "anthropic"]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "openpyxl"]
+dev = ["pytest", "ruff", "openpyxl", "fastapi", "uvicorn[standard]", "jinja2", "sse-starlette", "httpx"]
 export = ["openpyxl"]
+ui = ["fastapi", "uvicorn[standard]", "jinja2", "sse-starlette"]
 
 [project.scripts]
 asgard = "asgard.cli.main:main"
@@ -23,6 +24,7 @@ include = ["asgard*"]
 
 [tool.setuptools.package-data]
 "asgard.data" = ["security_keywords.txt"]
+"asgard.ui" = ["templates/*.html", "static/css/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

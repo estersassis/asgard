@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}ASGARD · {{ label }}{% endblock %}
+{% block content %}
+  <span class="lbl">{{ numeral }} · {{ label }}</span>
+  <h1 class="serif" style="margin: 12px 0 0; font-weight: 300; font-size: 44px; line-height: 1.1">
+    {% block heading %}{{ label }}{% endblock %}
+  </h1>
+  {% block body %}
+  <p style="color: var(--ink-soft); margin-top: 24px">This screen will be built in a later issue.</p>
+  {% endblock %}
+{% endblock %}
