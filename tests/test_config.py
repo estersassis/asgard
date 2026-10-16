@@ -171,10 +171,34 @@ def test_saved_config_reloads_without_secrets(
 def test_cli_run_config_matches_saved_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     monkeypatch.setattr("asgard.core.config.load_dotenv", lambda path=Path(".env"): None)
-    monkeypatch.setattr(
-        "asgard.core.config.urllib.request.urlopen",
-        lambda request, timeout=10: _Response(body=b"[]"),
-    )
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        if request.full_url == "https://api.github.com/graphql":
+            return _Response(
+                body=json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequests": {
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                    "nodes": [],
+                                }
+                            },
+                            "rateLimit": {
+                                "cost": 1,
+                                "remaining": 5000,
+                                "resetAt": "2024-01-01T01:00:00Z",
+                            },
+                        }
+                    }
+                ).encode()
+            )
+        return _Response()
+
+    monkeypatch.setattr("asgard.core.config.urllib.request.urlopen", opener)
     source = _settings(tmp_path)
     out = tmp_path / "out"
     main(
@@ -188,7 +212,8 @@ def test_cli_run_config_matches_saved_file(tmp_path: Path, monkeypatch: pytest.M
             "--max-iterations",
             "4",
             "--include-unresolved",
-        ]
+        ],
+        opener=opener,
     )
     saved = json.loads((out / "config.json").read_text(encoding="utf-8"))
     assert saved["repo"] == "other/repo"
@@ -352,21 +377,49 @@ def test_batch_flags_are_saved_and_copied_into_the_manifest(
 
     def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
         url = request.full_url
-        if "/pulls?" in url:
+        if url.startswith("https://api.github.com/repos/") and "/pulls" not in url:
+            return _Response()
+        if url == "https://api.github.com/graphql":
+            empty = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}
             return _Response(
                 body=json.dumps(
-                    [
-                        {
-                            "number": 4,
-                            "created_at": "2024-01-01T00:00:00Z",
-                            "updated_at": "2024-01-01T00:00:00Z",
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequests": {
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                    "nodes": [
+                                        {
+                                            "id": "PR_node_4",
+                                            "number": 4,
+                                            "title": "change",
+                                            "body": "change",
+                                            "state": "OPEN",
+                                            "merged": False,
+                                            "createdAt": "2024-01-01T00:00:00Z",
+                                            "updatedAt": "2024-01-01T00:00:00Z",
+                                            "baseRepository": {
+                                                "nameWithOwner": "jpadilla/pyjwt"
+                                            },
+                                            "comments": empty,
+                                            "reviewThreads": empty,
+                                        }
+                                    ],
+                                }
+                            },
+                            "rateLimit": {
+                                "cost": 1,
+                                "remaining": 5000,
+                                "resetAt": "2024-01-01T01:00:00Z",
+                            },
                         }
-                    ]
+                    }
                 ).encode()
             )
-        if url.endswith("/pulls/4"):
-            return _Response(body=json.dumps({"number": 4, "body": "change"}).encode())
-        return _Response(body=b"[]")
+        return _Response(body=b"{}")
 
     main(
         [

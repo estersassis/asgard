@@ -171,6 +171,7 @@ runs/owner__name/20260101T120000Z/
   manifest.json
   mine/
     output.json
+    metrics.json
     prs/123.json
   normalize/
     output.json
