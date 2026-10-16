@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}ASGARD · Pipeline{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', path='css/pipeline.css') }}">
+{% endblock %}
+{% block page_class %} pipeline-page{% endblock %}
+{% block content %}
+  <div class="pipeline-hero">
+    <span class="lbl pipeline-status" id="pipeline-status">—</span>
+    <h1 class="serif pipeline-repo" id="pipeline-repo"><span id="pipeline-owner">—</span>/<em id="pipeline-name">—</em></h1>
+  </div>
+
+  <ol class="pipeline-stages" id="pipeline-stages" aria-label="Pipeline stages">
+    <li class="stage" data-stage="mine" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">I</span>
+        <span class="stage-name">Mine</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+    <li class="stage" data-stage="normalize" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">II</span>
+        <span class="stage-name">Normalize</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+    <li class="stage" data-stage="prefilter" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">III</span>
+        <span class="stage-name">Pre-filter</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+    <li class="stage" data-stage="classify" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">IV</span>
+        <span class="stage-name">Classify</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+    <li class="stage" data-stage="consolidate" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">V</span>
+        <span class="stage-name">Consolidate</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+    <li class="stage" data-stage="synthesize" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">VI</span>
+        <span class="stage-name">Synthesize</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+    <li class="stage" data-stage="security_md" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">VII</span>
+        <span class="stage-name">SECURITY.md</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+    <li class="stage" data-stage="bundle" data-state="pending">
+      <div class="stage-row">
+        <span class="serif stage-num">VIII</span>
+        <span class="stage-name">Bundle</span>
+        <span class="stage-detail" data-detail></span>
+      </div>
+      <span class="stage-note" data-note hidden></span>
+      <div class="stage-bar" data-bar hidden><div class="stage-bar-fill" data-bar-fill></div></div>
+    </li>
+  </ol>
+
+  <div class="pipeline-errors" id="pipeline-errors" hidden></div>
+
+  <div class="pipeline-controls">
+    <div class="pipeline-links">
+      <button type="button" class="link" id="pipeline-stop" hidden>Stop</button>
+      <button type="button" class="link" id="pipeline-log-toggle" aria-expanded="false" aria-controls="pipeline-log">Show log</button>
+    </div>
+    <a class="btn pri" id="pipeline-primary" href="#" hidden>Watch the council</a>
+  </div>
+
+  <ol class="pipeline-log" id="pipeline-log" hidden aria-label="Event log"></ol>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', path='js/pipeline.js') }}" defer></script>
+{% endblock %}
