@@ -88,6 +88,7 @@ def test_flag_overrides_file_and_omitted_flag_stays(
     assert config.max_iterations == 9
     assert config.batch_size == 1
     assert config.batch_max_chars is None
+    assert config.mining.page_size == 50
     assert config.filters.state == "open"
     assert config.prefilter is True
     assert config.include_unresolved is False
@@ -95,6 +96,34 @@ def test_flag_overrides_file_and_omitted_flag_stays(
     assert config.llm.default.model == "llama3.1"
     from_url, _ = load_run(config_path, {"repo": "https://github.com/jpadilla/pyjwt.git"})
     assert from_url.repo == "jpadilla/pyjwt"
+
+
+def test_mining_page_size_from_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    source = tmp_path / "asgard.toml"
+    source.write_text(
+        "\n".join(
+            [
+                'repo = "owner/name"',
+                f'output_dir = "{tmp_path}"',
+                "",
+                "[mining]",
+                "page_size = 25",
+                "",
+                "[llm.default]",
+                'provider = "ollama"',
+                'model = "llama3.1"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config, _ = load_run(source)
+    assert config.mining.page_size == 25
+    assert config.redacted_dump()["mining"] == {"page_size": 25}
 
 
 def test_saved_config_reloads_without_secrets(
@@ -196,6 +225,8 @@ def test_rejects_bad_repo_and_dates_before_network(
         load_run(_settings(tmp_path), {"batch_size": 0})
     with pytest.raises(ConfigError, match="batch_max_chars"):
         load_run(_settings(tmp_path), {"batch_max_chars": 0})
+    with pytest.raises(ConfigError, match="page_size"):
+        load_run(_settings(tmp_path), {"mining": {"page_size": 0}})
     assert called is False
 
 

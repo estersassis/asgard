@@ -50,11 +50,23 @@ class Filters(BaseModel):
         return self
 
 
+class MiningSettings(BaseModel):
+    page_size: int = 50
+
+    @field_validator("page_size")
+    @classmethod
+    def _page_size(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("page_size must be >= 1")
+        return value
+
+
 class RunConfig(BaseModel):
     repo: str
     github_token: SecretStr = Field(exclude=True)
     llm: LLMSettings
     filters: Filters = Field(default_factory=Filters)
+    mining: MiningSettings = Field(default_factory=MiningSettings)
     max_iterations: int = 3
     batch_size: int = 1
     batch_max_chars: int | None = None
