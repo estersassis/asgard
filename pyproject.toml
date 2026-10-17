@@ -24,6 +24,7 @@ include = ["asgard*"]
 
 [tool.setuptools.package-data]
 "asgard.data" = ["security_keywords.txt"]
+"asgard.data.pilot" = ["*.json"]
 "asgard.ui" = ["templates/*.html", "static/css/*.css", "static/js/*.js"]
 
 [tool.pytest.ini_options]
