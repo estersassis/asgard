@@ -28,12 +28,15 @@ from asgard.core.config import (
     probe_run,
 )
 from asgard.core.pipeline import PIPELINE
+from asgard.core.pilot.gate import GateThresholds, PromoteError
+from asgard.core.pilot.set import PilotSet
 from asgard.core.prompt_registry import (
     ROLES,
     PromptRegistry,
     default_registry_root,
 )
 from asgard.prompts.synthesizer import SYSTEM_PROMPT
+from asgard.ui.pilot import PilotSession, PilotStore, promote_from_api
 from asgard.ui.session import RunSession, SessionStore
 
 # Allowlisted run-dir files served by the UI (relative to the run output dir).
@@ -115,6 +118,30 @@ class PromptSaveBody(BaseModel):
     registry_dir: Path | None = None
 
 
+class PilotThresholdsBody(BaseModel):
+    f1_min: float | None = 0.90
+    kappa_min: float | None = 0.80
+    accuracy_min: float | None = None
+    precision_min: float | None = None
+    recall_min: float | None = None
+
+
+class StartPilotBody(BaseModel):
+    candidate: str
+    active: str | None = None
+    pilot_set: str = "example"
+    config: Path | None = None
+    thresholds: PilotThresholdsBody | None = None
+    registry_dir: Path | None = None
+
+
+class PromotePilotBody(BaseModel):
+    candidate: str
+    config: Path
+    from_result: Path | None = None
+    role: str = "classifier"
+
+
 def create_app(
     *,
     opener: Any = None,
@@ -122,9 +149,11 @@ def create_app(
     dotenv: Path | None = Path(".env"),
 ) -> FastAPI:
     store = SessionStore(opener=opener, handlers=handlers, dotenv=dotenv)
+    pilots = PilotStore(handlers=handlers, dotenv=dotenv)
     templates = Jinja2Templates(directory=str(_UI_ROOT / "templates"))
     app = FastAPI(title="ASGARD")
     app.state.store = store
+    app.state.pilots = pilots
     app.mount("/static", StaticFiles(directory=str(_UI_ROOT / "static")), name="static")
 
     def _theme(request: Request) -> str:
@@ -152,6 +181,12 @@ def create_app(
         session = store.get(run_id)
         if session is None:
             raise HTTPException(status_code=404, detail="run not found")
+        return session
+
+    def _pilot_or_404(run_id: str) -> PilotSession:
+        session = pilots.get(run_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="pilot run not found")
         return session
 
     def _run_file(
@@ -358,6 +393,95 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return version.model_dump(mode="json")
+
+    @app.get("/api/pilot/sets")
+    async def list_pilot_sets() -> list[dict[str, Any]]:
+        return pilots.list_sets()
+
+    @app.post("/api/pilot/sets")
+    async def upload_pilot_set(body: PilotSet) -> dict[str, str]:
+        try:
+            return pilots.save_set(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/pilot/runs")
+    async def start_pilot_run(body: StartPilotBody) -> dict[str, str]:
+        candidate = body.candidate.strip()
+        if not candidate:
+            raise HTTPException(status_code=400, detail="candidate must not be empty")
+        try:
+            pilot_set = pilots.resolve_pilot_set(body.pilot_set)
+        except (ValueError, LookupError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        thresholds = None
+        if body.thresholds is not None:
+            thresholds = GateThresholds.model_validate(body.thresholds.model_dump())
+        session = pilots.create()
+        try:
+            output_dir = session.start(
+                candidate=candidate,
+                active=body.active,
+                pilot_set=pilot_set,
+                config=body.config,
+                thresholds=thresholds,
+                registry_dir=body.registry_dir,
+            )
+        except (ConfigError, LookupError, ValueError) as exc:
+            session.status = "error"
+            session.error = str(exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            session.status = "error"
+            session.error = str(exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        pilots.rekey(session, output_dir.name)
+        return {"id": session.id, "output_dir": str(output_dir)}
+
+    @app.get("/api/pilot/runs/{run_id}")
+    async def pilot_run_status(run_id: str) -> dict[str, Any]:
+        session = _pilot_or_404(run_id)
+        return {
+            "id": session.id,
+            "status": session.status,
+            "running": session.running,
+            "output_dir": str(session.output_dir) if session.output_dir else None,
+            "error": session.error,
+        }
+
+    @app.get("/api/pilot/runs/{run_id}/metrics")
+    async def pilot_run_metrics(run_id: str) -> dict[str, Any]:
+        session = _pilot_or_404(run_id)
+        if session.status == "running" or session.running:
+            raise HTTPException(status_code=404, detail="metrics not ready")
+        path = pilots.metrics_path(run_id)
+        if path is None:
+            if session.error:
+                raise HTTPException(status_code=400, detail=session.error)
+            raise HTTPException(status_code=404, detail="metrics not found")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=500, detail="invalid metrics.json") from exc
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail="invalid metrics.json")
+        return data
+
+    @app.post("/api/pilot/promote")
+    async def promote_pilot(body: PromotePilotBody) -> dict[str, Any]:
+        candidate = body.candidate.strip()
+        if not candidate:
+            raise HTTPException(status_code=400, detail="candidate must not be empty")
+        try:
+            return promote_from_api(
+                candidate=candidate,
+                config=body.config,
+                from_result=body.from_result,
+                role=body.role,
+                root=pilots.root,
+            )
+        except PromoteError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/runs")
     async def list_runs() -> list[dict[str, Any]]:
