@@ -94,7 +94,10 @@ def test_classifier_batch_asks_for_an_independent_judgment_per_pr() -> None:
     assert messages[0].content == CLASSIFIER_BATCH_PROMPT
     user = messages[1].content
     assert "Judge each pull request independently" in user
-    assert "description, general_discussion[i], and code_review_threads[j].comments[k]" in user
+    assert (
+        "title, description, general_discussion[i], and "
+        "code_review_threads[j].comments[k]"
+    ) in user
     assert "belong only to that pull request" in user
     payload = json.loads(user.split("\n\n", 1)[1])
     assert [item["pr_id"] for item in payload] == ["42", "7"]
@@ -216,7 +219,10 @@ def test_evaluator_batch_sends_each_pair_and_asks_for_independence() -> None:
     assert messages[0].content == EVALUATOR_BATCH_PROMPT
     user = messages[1].content
     assert "Judge each pair independently" in user
-    assert "description, general_discussion[i], and code_review_threads[j].comments[k]" in user
+    assert (
+        "title, description, general_discussion[i], and "
+        "code_review_threads[j].comments[k]"
+    ) in user
     assert "belong only to the pull request in that pair" in user
     payload = json.loads(user.split("\n\n", 1)[1])
     assert payload[0]["pr_id"] == "42"

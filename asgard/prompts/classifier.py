@@ -30,10 +30,11 @@ Do not count it when the text is only:
 - a refactor that does not discuss security
 
 Read the whole pull request, including its title and description.
-A quote taken from the description is valid evidence.
+A quote taken from the title or description is valid evidence.
 
 Each quote is a non-empty literal excerpt copied from the cited place.
 Use one of these location forms, with zero-based indexes:
+- title
 - description
 - general_discussion[i]
 - code_review_threads[j].comments[k]
@@ -108,11 +109,12 @@ Do not count it when the text is only:
 - a refactor that does not discuss security
 
 Read the whole pull request, including its title and description.
-A quote taken from the description is valid evidence.
+A quote taken from the title or description is valid evidence.
 
 Each quote is a non-empty literal excerpt copied from the cited place in that
 same pull request. Use one of these location forms, with zero-based indexes
 that start again for each pull request:
+- title
 - description
 - general_discussion[i]
 - code_review_threads[j].comments[k]
@@ -163,8 +165,8 @@ def build_batch_messages(
         payload.append(entry)
     content = (
         "Judge each pull request independently. "
-        "description, general_discussion[i], and code_review_threads[j].comments[k] "
-        "belong only to that pull request.\n\n"
+        "title, description, general_discussion[i], and "
+        "code_review_threads[j].comments[k] belong only to that pull request.\n\n"
         f"{json.dumps(payload, indent=2)}"
     )
     return [
