@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -34,6 +35,18 @@ class Evidence(BaseModel):
         return value
 
 
+def _coerce_evidence_to_decision(data: Any) -> Any:
+    """Drop evidence when the model says false but still quotes text."""
+    if not isinstance(data, dict):
+        return data
+    if data.get("has_security_discussion") is not False:
+        return data
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return data
+    return {**data, "evidence": []}
+
+
 def _evidence_matches_decision(has_security_discussion: bool, evidence: list[Evidence]) -> None:
     if has_security_discussion and not evidence:
         raise ValueError("evidence is required when has_security_discussion is true")
@@ -48,6 +61,11 @@ class Classification(BaseModel):
     evidence: list[Evidence]
     rationale: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: Any) -> Any:
+        return _coerce_evidence_to_decision(data)
+
     @model_validator(mode="after")
     def _check_evidence(self) -> "Classification":
         _evidence_matches_decision(self.has_security_discussion, self.evidence)
@@ -61,6 +79,11 @@ class BatchClassificationItem(BaseModel):
     has_security_discussion: bool
     evidence: list[Evidence]
     rationale: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: Any) -> Any:
+        return _coerce_evidence_to_decision(data)
 
     @model_validator(mode="after")
     def _check_evidence(self) -> "BatchClassificationItem":

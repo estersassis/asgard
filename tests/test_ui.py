@@ -392,6 +392,8 @@ def test_council_page_assets() -> None:
     assert 'id="council-unresolved"' in page.text
     assert 'id="council-loop"' in page.text
     assert 'aria-label="Pull requests"' in page.text
+    assert 'aria-label="Status filter"' in page.text
+    assert 'id="council-pr-list"' in page.text
     assert 'aria-label="Deliberation"' in page.text
     assert 'data-theme="light"' not in page.text
     assert not _TOKEN_HEX.search(page.text)
@@ -408,6 +410,7 @@ def test_council_page_assets() -> None:
     assert css.status_code == 200
     assert "1080px" in css.text
     assert ".pr" in css.text
+    assert ".council-filter" in css.text
     assert ".dot" in css.text
     assert ".dot.live" in css.text
     assert "@keyframes pulse" in css.text
@@ -421,6 +424,8 @@ def test_council_page_assets() -> None:
     assert "ClassificationAttempt" in js.text
     assert "EvaluatorVerdict" in js.text
     assert "LoopFinished" in js.text
+    assert "STATUS_FILTERS" in js.text
+    assert "statusFilter" in js.text
     assert "/classify/trace" in js.text
     assert "/classify/metrics" in js.text
     assert "/classify/output" in js.text

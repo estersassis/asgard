@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from asgard.core.classification import Classification, classify
+from asgard.core.classification import BatchClassification, Classification, classify
 from asgard.core.events import ClassificationAttempt
 from asgard.core.normalization import NormalizedPullRequest, PullRequestContext
 from asgard.providers.factory import LLMFactory
@@ -152,14 +152,14 @@ def test_incoherent_evidence_fails_validation() -> None:
                 "rationale": "claimed without a quote",
             }
         )
-    with pytest.raises(ValidationError):
-        Classification.model_validate(
-            {
-                "has_security_discussion": False,
-                "evidence": [{"quote": "authentication bypass", "location": "description"}],
-                "rationale": "no security discussion",
-            }
-        )
+    coerced = Classification.model_validate(
+        {
+            "has_security_discussion": False,
+            "evidence": [{"quote": "authentication bypass", "location": "description"}],
+            "rationale": "no security discussion",
+        }
+    )
+    assert coerced.evidence == []
 
 
 def test_title_location_is_accepted_and_context_title_aliases() -> None:
@@ -176,3 +176,31 @@ def test_title_location_is_accepted_and_context_title_aliases() -> None:
         }
     )
     assert classified.evidence[0].location == "title"
+
+
+def test_false_decision_drops_spurious_evidence() -> None:
+    classified = Classification.model_validate(
+        {
+            "has_security_discussion": False,
+            "evidence": [{"quote": "error handling logic itself", "location": "description"}],
+            "rationale": "The text is about error handling, not security.",
+        }
+    )
+    assert classified.has_security_discussion is False
+    assert classified.evidence == []
+
+    batched = BatchClassification.model_validate(
+        {
+            "results": [
+                {
+                    "pr_id": "873",
+                    "has_security_discussion": False,
+                    "evidence": [
+                        {"quote": "error handling logic itself", "location": "description"}
+                    ],
+                    "rationale": "Not a security discussion.",
+                }
+            ]
+        }
+    )
+    assert batched.results[0].evidence == []

@@ -81,6 +81,39 @@
 .council-prs {
   flex: 1 1 280px;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.council-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+
+.council-filter {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.council-filter:hover {
+  color: var(--ink);
+}
+
+.council-filter.on {
+  color: var(--ink);
+  border-bottom-color: var(--ember);
 }
 
 .council-deliberation {

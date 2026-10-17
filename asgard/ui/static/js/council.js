@@ -12,6 +12,15 @@
   ];
 
   var FINDING_ORDER = ["decision", "evidence", "completeness", "rationale"];
+  var STATUS_FILTERS = [
+    "all",
+    "classifying",
+    "review",
+    "security",
+    "not security",
+    "unresolved",
+    "error",
+  ];
   var ROMAN = [
     "I",
     "II",
@@ -42,7 +51,8 @@
     rateI: document.getElementById("council-rate-i"),
     rateFinal: document.getElementById("council-rate-final"),
     mean: document.getElementById("council-mean"),
-    prs: document.getElementById("council-prs"),
+    filters: document.getElementById("council-filters"),
+    prs: document.getElementById("council-pr-list"),
     status: document.getElementById("council-status"),
     title: document.getElementById("council-pr-title"),
     waiting: document.getElementById("council-waiting"),
@@ -56,6 +66,7 @@
     order: [],
     prs: {},
     selected: null,
+    statusFilter: "all",
     why: null,
     totals: null,
     metrics: null,
@@ -687,6 +698,29 @@
     render();
   }
 
+  function setStatusFilter(filter) {
+    if (STATUS_FILTERS.indexOf(filter) < 0) return;
+    state.statusFilter = filter;
+    state.why = null;
+    var visible = visibleOrder();
+    if (visible.indexOf(state.selected) < 0) {
+      state.selected = visible.length ? visible[0] : null;
+    }
+    render();
+  }
+
+  function matchesFilter(pr) {
+    if (state.statusFilter === "all") return true;
+    return shortOf(pr) === state.statusFilter;
+  }
+
+  function visibleOrder() {
+    return state.order.filter(function (prId) {
+      var pr = state.prs[prId];
+      return pr && matchesFilter(pr);
+    });
+  }
+
   function toggleWhy(key) {
     state.why = state.why === key ? null : key;
     render();
@@ -728,10 +762,32 @@
     els.loop.hidden = false;
   }
 
+  function renderFilters() {
+    if (!els.filters) return;
+    els.filters.innerHTML = "";
+    STATUS_FILTERS.forEach(function (filter) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "council-filter";
+      button.setAttribute("role", "tab");
+      button.setAttribute(
+        "aria-selected",
+        filter === state.statusFilter ? "true" : "false"
+      );
+      if (filter === state.statusFilter) button.classList.add("on");
+      button.textContent = filter;
+      button.addEventListener("click", function () {
+        setStatusFilter(filter);
+      });
+      els.filters.appendChild(button);
+    });
+  }
+
   function renderList() {
+    if (!els.prs) return;
     els.prs.innerHTML = "";
     if (!els.prTemplate) return;
-    state.order.forEach(function (prId) {
+    visibleOrder().forEach(function (prId) {
       var pr = state.prs[prId];
       if (!pr) return;
       var node = els.prTemplate.content.firstElementChild.cloneNode(true);
@@ -903,11 +959,13 @@
   }
 
   function render() {
-    if (!state.selected && state.order.length) {
-      state.selected = state.order[0];
+    var visible = visibleOrder();
+    if (!state.selected || visible.indexOf(state.selected) < 0) {
+      state.selected = visible.length ? visible[0] : null;
     }
     renderTotals();
     renderMetrics();
+    renderFilters();
     renderList();
     renderDeliberation();
   }
