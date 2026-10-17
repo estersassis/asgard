@@ -48,8 +48,14 @@ When has_security_discussion is true, evidence has at least one item.
 When has_security_discussion is false, evidence is an empty list.
 
 When a previous response and evaluator feedback follow the pull request,
-revise the decision using that feedback. The feedback is about the last
+revise that answer using the feedback. The feedback is about the last
 answer. Do not treat it as pull request text.
+
+Keep has_security_discussion when the feedback is about evidence, quotes,
+or locations. Change the decision only when the feedback says it is wrong.
+When quotes fail, copy a non-empty literal excerpt from the cited place, or
+fix the location so it points to where that excerpt actually appears.
+Do not repeat the previous evidence unchanged when the feedback rejects it.
 """
 
 
@@ -135,6 +141,13 @@ When an item includes a previous response and evaluator feedback, revise only
 that pull request using that feedback. The feedback is about the last answer
 for that pull request. Do not treat it as pull request text, and do not apply
 it to any other pull request.
+
+Keep has_security_discussion when the feedback is about evidence, quotes,
+or locations. Change the decision only when the feedback says it is wrong.
+When quotes fail, copy a non-empty literal excerpt from the cited place in
+that same pull request, or fix the location so it points to where that
+excerpt actually appears. Do not repeat the previous evidence unchanged when
+the feedback rejects it.
 """
 
 
