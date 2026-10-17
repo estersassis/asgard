@@ -28,6 +28,11 @@ from asgard.core.config import (
     probe_run,
 )
 from asgard.core.pipeline import PIPELINE
+from asgard.core.prompt_registry import (
+    ROLES,
+    PromptRegistry,
+    default_registry_root,
+)
 from asgard.prompts.synthesizer import SYSTEM_PROMPT
 from asgard.ui.session import RunSession, SessionStore
 
@@ -103,6 +108,13 @@ class PromptBody(BaseModel):
     text: str
 
 
+class PromptSaveBody(BaseModel):
+    name: str
+    body: str
+    notes: str = ""
+    registry_dir: Path | None = None
+
+
 def create_app(
     *,
     opener: Any = None,
@@ -165,6 +177,13 @@ def create_app(
         if not path.is_relative_to(root):
             raise HTTPException(status_code=404, detail="file not found")
         return path
+
+    def _prompt_registry(registry_dir: Path | None = None) -> PromptRegistry:
+        return PromptRegistry(registry_dir or default_registry_root())
+
+    def _check_prompt_role(role: str) -> None:
+        if role not in ROLES:
+            raise HTTPException(status_code=400, detail=f"unknown prompt role: {role}")
 
     @app.get("/", response_class=HTMLResponse)
     @app.get("/setup", response_class=HTMLResponse, name="setup")
@@ -266,6 +285,79 @@ def create_app(
         data.pop("github_token", None)
         data.pop("keys", None)
         return data
+
+    @app.get("/api/prompts")
+    async def list_prompts(
+        role: str,
+        registry_dir: Path | None = None,
+    ) -> list[dict[str, Any]]:
+        _check_prompt_role(role)
+        versions = _prompt_registry(registry_dir).list(role)
+        return [
+            {
+                "id": version.id,
+                "name": version.name,
+                "sha256": version.sha256,
+                "created_at": version.created_at,
+                "notes": version.notes,
+            }
+            for version in versions
+        ]
+
+    @app.get("/api/prompts/active")
+    async def active_prompts(config: Path | None = None) -> dict[str, str]:
+        active = {
+            "classifier": "default",
+            "evaluator": "default",
+            "synthesizer": "default",
+        }
+        if config is None or config.suffix.lower() != ".toml":
+            return active
+        path = config.expanduser()
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="config not found")
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid config: {exc}") from exc
+        prompts = data.get("prompts")
+        if not isinstance(prompts, dict):
+            return active
+        for role in ROLES:
+            raw = prompts.get(role)
+            if raw is None:
+                continue
+            version_id = str(raw).strip()
+            if version_id:
+                active[role] = version_id
+        return active
+
+    @app.get("/api/prompts/{role}/{version_id}")
+    async def get_prompt(
+        role: str,
+        version_id: str,
+        registry_dir: Path | None = None,
+    ) -> dict[str, Any]:
+        _check_prompt_role(role)
+        try:
+            version = _prompt_registry(registry_dir).get(role, version_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return version.model_dump(mode="json")
+
+    @app.post("/api/prompts/{role}")
+    async def save_prompt(role: str, body: PromptSaveBody) -> dict[str, Any]:
+        _check_prompt_role(role)
+        try:
+            version = _prompt_registry(body.registry_dir).save(
+                role,
+                name=body.name,
+                body=body.body,
+                notes=body.notes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return version.model_dump(mode="json")
 
     @app.get("/api/runs")
     async def list_runs() -> list[dict[str, Any]]:
