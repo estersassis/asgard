@@ -293,10 +293,14 @@ def test_shell_and_themes() -> None:
     assert "Save asgard.toml" in dark.text
     assert "/static/css/setup.css" in dark.text
     assert "/static/js/setup.js" in dark.text
+    assert 'id="runs-footer"' in dark.text
+    assert "/static/js/shell.js" in dark.text
+    assert "Past runs" in dark.text
 
     home = client.get("/")
     assert home.status_code == 200
     assert 'aria-label="Run setup"' in home.text
+    assert 'id="runs-footer"' in home.text
 
     light = client.get("/setup?theme=light")
     assert light.status_code == 200
@@ -317,8 +321,12 @@ def test_shell_and_themes() -> None:
     assert setup_js.status_code == 200
     assert "/api/setup/validate" in setup_js.text
     assert "/api/setup/models" in setup_js.text
-    assert "/api/runs" in setup_js.text
     assert "/pipeline?run=" in setup_js.text
+
+    shell_js = client.get("/static/js/shell.js")
+    assert shell_js.status_code == 200
+    assert "/api/runs" in shell_js.text
+    assert "runs-footer" in shell_js.text or "runs-menu-list" in shell_js.text
 
     templates = Path(__file__).resolve().parents[1] / "asgard" / "ui" / "templates"
     for path in templates.rglob("*.html"):
@@ -432,8 +440,7 @@ def test_council_page_assets() -> None:
     assert "/classify/output" in js.text
     assert "/classify/items" in js.text
     assert "/prefilter/output" in js.text
-    assert "/mine/output" in js.text
-    assert "/mine/prs/" in js.text
+    assert "/mine/index" in js.text
     assert '"why"' in js.text or "why" in js.text
     assert '"hide"' in js.text or "hide" in js.text
 
@@ -590,6 +597,14 @@ def test_council_file_endpoints(
     assert api_pr.json() == disk_pr
     assert "id" in api_pr.json()
     assert api_pr.json()["number"] == pr_number
+
+    api_index = client.get(f"/api/runs/{run_id}/mine/index")
+    assert api_index.status_code == 200
+    index = api_index.json()
+    assert index["numbers"] == disk_mine
+    assert isinstance(index["node_ids"], dict)
+    if isinstance(disk_pr.get("node_id"), str) and disk_pr["node_id"]:
+        assert index["node_ids"][str(pr_number)] == disk_pr["node_id"]
 
     not_digit = client.get(f"/api/runs/{run_id}/mine/prs/abc")
     assert not_digit.status_code == 404

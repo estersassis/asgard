@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 from asgard.core.config import prepare_run
 from asgard.core.pipeline import PIPELINE, clear_from, run_pipeline
 from asgard.core.stage import CancelledError
+from asgard.ui.runs import discover_runs, resolve_run_dir, stable_run_id
 from asgard.ui.sink import UISink
 
 _PROMPT = "system_prompt.txt"
@@ -22,8 +24,9 @@ class RunSession:
         opener: Any = None,
         handlers: dict[str, Any] | None = None,
         dotenv: Path | None = Path(".env"),
+        session_id: str | None = None,
     ) -> None:
-        self.id = uuid.uuid4().hex
+        self.id = session_id or uuid.uuid4().hex
         self.opener = opener
         self.handlers = handlers
         self.dotenv = dotenv
@@ -34,6 +37,27 @@ class RunSession:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._running = False
+
+    @classmethod
+    def open_existing(
+        cls,
+        output_dir: Path,
+        *,
+        session_id: str,
+        opener: Any = None,
+        handlers: dict[str, Any] | None = None,
+        dotenv: Path | None = Path(".env"),
+    ) -> RunSession:
+        """Attach to a finished or interrupted run directory without starting work."""
+        session = cls(
+            opener=opener,
+            handlers=handlers,
+            dotenv=dotenv,
+            session_id=session_id,
+        )
+        session.output_dir = output_dir
+        session.sink.close()
+        return session
 
     @property
     def running(self) -> bool:
@@ -153,6 +177,86 @@ class SessionStore:
             self._sessions[session.id] = session
         return session
 
+    def rekey(self, session: RunSession, new_id: str) -> None:
+        """Point the session at a stable on-disk id when the run directory is known."""
+        if not new_id or new_id == session.id:
+            return
+        with self._lock:
+            self._sessions.pop(session.id, None)
+            session.id = new_id
+            self._sessions[new_id] = session
+
+    def bind_stable_id(self, session: RunSession) -> str:
+        """Prefer ``repo--stamp`` when the output dir lives under runs/."""
+        if session.output_dir is None:
+            return session.id
+        stable = stable_run_id(session.output_dir)
+        if stable is None:
+            return session.id
+        self.rekey(session, stable)
+        return session.id
+
     def get(self, session_id: str) -> RunSession | None:
         with self._lock:
-            return self._sessions.get(session_id)
+            found = self._sessions.get(session_id)
+            if found is not None:
+                return found
+        path = resolve_run_dir(session_id)
+        if path is None:
+            return None
+        session = RunSession.open_existing(
+            path,
+            session_id=session_id,
+            opener=self.opener,
+            handlers=self.handlers,
+            dotenv=self.dotenv,
+        )
+        with self._lock:
+            existing = self._sessions.get(session_id)
+            if existing is not None:
+                return existing
+            self._sessions[session_id] = session
+            return session
+
+    def list_runs(self) -> list[dict[str, Any]]:
+        disk = discover_runs()
+        with self._lock:
+            live = {
+                session.id: session
+                for session in self._sessions.values()
+                if session.output_dir is not None
+            }
+        for item in disk:
+            session = live.get(item["id"])
+            item["running"] = bool(session and session.running)
+            item["error"] = session.error if session else None
+        # Include in-memory sessions whose dirs are outside the scanned roots.
+        known = {item["id"] for item in disk}
+        for session_id, session in live.items():
+            if session_id in known or session.output_dir is None:
+                continue
+            disk.append(
+                {
+                    "id": session_id,
+                    "output_dir": str(session.output_dir),
+                    "repo": _repo_from_dir(session.output_dir),
+                    "stamp": session.output_dir.name,
+                    "complete": (session.output_dir / "SECURITY.md").is_file(),
+                    "running": session.running,
+                    "error": session.error,
+                }
+            )
+        return disk
+
+
+def _repo_from_dir(output_dir: Path) -> str:
+    config = output_dir / "config.json"
+    if not config.is_file():
+        return output_dir.name
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return output_dir.name
+    if isinstance(data, dict) and isinstance(data.get("repo"), str) and data["repo"]:
+        return data["repo"]
+    return output_dir.name

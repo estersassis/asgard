@@ -325,7 +325,8 @@
         verdict: verdict ? String(verdict).toLowerCase() : null,
         findings: findings,
         feedback: feedbackOf(eParsed),
-        reviewing: !pair.evaluator,
+        // Only "reviewing" while live; a finished PR with no evaluator ended early.
+        awaitingEvaluator: !pair.evaluator,
       };
     });
   }
@@ -426,36 +427,18 @@
   }
 
   function loadMineNumbers() {
-    return api("/mine/output").then(function (result) {
-      if (!result.ok || !Array.isArray(result.body)) return;
-      var numbers = result.body.filter(function (item) {
+    return api("/mine/index").then(function (result) {
+      if (!result.ok || !result.body || typeof result.body !== "object") return;
+      var numbers = Array.isArray(result.body.numbers) ? result.body.numbers : [];
+      var nodeIds =
+        result.body.node_ids && typeof result.body.node_ids === "object"
+          ? result.body.node_ids
+          : {};
+      numbers = numbers.filter(function (item) {
         return typeof item === "number" && !isNaN(item);
       });
       if (!numbers.length) return;
-      return Promise.all(
-        numbers.map(function (number) {
-          return api("/mine/prs/" + encodeURIComponent(String(number))).then(
-            function (prResult) {
-              var nodeId = null;
-              if (
-                prResult.ok &&
-                prResult.body &&
-                typeof prResult.body === "object" &&
-                typeof prResult.body.node_id === "string"
-              ) {
-                nodeId = prResult.body.node_id;
-              }
-              return { number: number, nodeId: nodeId };
-            }
-          );
-        })
-      ).then(function (rows) {
-        var nodeIds = {};
-        rows.forEach(function (row) {
-          if (row && row.nodeId) nodeIds[row.number] = row.nodeId;
-        });
-        resolveDisplayNumbers(numbers, nodeIds);
-      });
+      resolveDisplayNumbers(numbers, nodeIds);
     });
   }
 
@@ -585,7 +568,7 @@
         verdict: null,
         findings: [],
         feedback: "",
-        reviewing: true,
+        awaitingEvaluator: true,
       };
       pr.rounds.push(existing);
     }
@@ -613,7 +596,7 @@
       verdict: null,
       findings: [],
       feedback: "",
-      reviewing: true,
+      awaitingEvaluator: true,
     });
   }
 
@@ -628,7 +611,7 @@
       verdict: event.approved === true ? "approve" : "revise",
       findings: findings,
       feedback: feedback,
-      reviewing: false,
+      awaitingEvaluator: false,
     });
     if (event.approved === true) return;
     pr.phase = "classifying";
@@ -864,10 +847,10 @@
         n: roman(pr.attempts || 1),
         decision: null,
         quote: "",
-        verdict: "reviewing…",
+        verdict: null,
         findings: [],
         feedback: "",
-        reviewing: true,
+        awaitingEvaluator: true,
       });
     }
 
@@ -895,12 +878,37 @@
         quote.textContent = "";
       }
 
-      var verdictText = round.verdict || (round.reviewing ? "reviewing…" : "—");
+      var liveReview =
+        !!(round.awaitingEvaluator || round.reviewing) &&
+        (pr.phase === "review" || pr.phase === "classifying");
+      var verdictText = round.verdict;
+      var stopNote = "";
+      if (!verdictText) {
+        if (liveReview) {
+          verdictText = "reviewing…";
+        } else if (pr.status === "unresolved_no_progress") {
+          verdictText = "no progress";
+          stopNote = "Classifier repeated the same answer; evaluation did not run again.";
+        } else if (pr.status === "unresolved_max_iter") {
+          verdictText = "unresolved";
+        } else if (pr.status === "error") {
+          verdictText = "error";
+        } else {
+          verdictText = "—";
+        }
+      }
       verdict.textContent = "Evaluator · " + verdictText;
       verdict.classList.remove("is-approve", "is-revise", "is-reviewing");
       if (verdictText === "approve") verdict.classList.add("is-approve");
       else if (verdictText === "revise") verdict.classList.add("is-revise");
       else if (verdictText === "reviewing…") verdict.classList.add("is-reviewing");
+      else if (
+        verdictText === "no progress" ||
+        verdictText === "unresolved" ||
+        verdictText === "error"
+      ) {
+        verdict.classList.add("is-revise");
+      }
 
       var key = pr.prId + ":" + round.n;
       var open = state.why === key;
@@ -918,11 +926,13 @@
       } else {
         findingsBox.hidden = true;
         whyList.hidden = true;
+        whyBtn.onclick = null;
       }
 
-      if (round.feedback) {
+      var feedbackText = round.feedback || stopNote;
+      if (feedbackText) {
         feedback.hidden = false;
-        feedback.textContent = round.feedback;
+        feedback.textContent = feedbackText;
       } else {
         feedback.hidden = true;
         feedback.textContent = "";

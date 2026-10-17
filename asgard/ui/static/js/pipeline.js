@@ -32,6 +32,56 @@
   if (!runId) {
     var missing = document.getElementById("pipeline-status");
     if (missing) missing.textContent = "No run selected";
+    var runsBox = document.getElementById("pipeline-runs");
+    var runList = document.getElementById("pipeline-run-list");
+    var stages = document.getElementById("pipeline-stages");
+    var controls = document.querySelector(".pipeline-controls");
+    if (stages) stages.hidden = true;
+    if (controls) controls.hidden = true;
+    if (runsBox && runList) {
+      fetch("/api/runs")
+        .then(function (response) {
+          return response.ok ? response.json() : [];
+        })
+        .then(function (runs) {
+          runList.innerHTML = "";
+          if (!Array.isArray(runs) || !runs.length) {
+            runsBox.hidden = true;
+            return;
+          }
+          runs.forEach(function (run) {
+            var li = document.createElement("li");
+            var link = document.createElement("a");
+            link.href = "/pipeline?run=" + encodeURIComponent(run.id);
+            var title = document.createElement("span");
+            title.textContent = run.repo || run.id;
+            var meta = document.createElement("span");
+            meta.className = "pipeline-run-meta";
+            var stamp =
+              typeof run.stamp === "string" && run.stamp
+                ? run.stamp
+                : typeof run.id === "string" && run.id.indexOf("--") >= 0
+                  ? run.id.split("--").pop()
+                  : "";
+            var status = run.running
+              ? "running"
+              : run.error
+                ? "error"
+                : run.complete
+                  ? "complete"
+                  : "partial";
+            meta.textContent = (stamp ? stamp + " · " : "") + status;
+            link.appendChild(title);
+            link.appendChild(meta);
+            li.appendChild(link);
+            runList.appendChild(li);
+          });
+          runsBox.hidden = false;
+        })
+        .catch(function () {
+          runsBox.hidden = true;
+        });
+    }
     return;
   }
 
