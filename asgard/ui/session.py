@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from asgard.core.config import prepare_run
-from asgard.core.pipeline import PIPELINE, clear_from, run_pipeline
+from asgard.core.pipeline import (
+    PIPELINE,
+    classify_error_ids,
+    clear_from,
+    drop_classify_items,
+    run_pipeline,
+)
 from asgard.core.stage import CancelledError
 from asgard.ui.runs import discover_runs, resolve_run_dir, stable_run_id
 from asgard.ui.sink import UISink
@@ -127,6 +133,34 @@ class RunSession:
             config_path=self.output_dir / "config.json",
             start=stage,
         )
+
+    def retry_classify(
+        self,
+        pr_ids: list[str] | None = None,
+        *,
+        all_errors: bool = False,
+    ) -> tuple[Path, list[str]]:
+        """Drop error classify checkpoints and resume classify for those PRs."""
+        if self.output_dir is None:
+            raise RuntimeError("no run to resume")
+        if self.running:
+            raise RuntimeError("a run is already in progress")
+        self.join()
+        errors = set(classify_error_ids(self.output_dir))
+        if all_errors:
+            targets = errors
+        else:
+            targets = {item_id for item_id in (pr_ids or []) if item_id} & errors
+        if not targets:
+            raise ValueError("no error pull requests to retry")
+        removed = drop_classify_items(self.output_dir, targets)
+        if not removed:
+            raise ValueError("no error pull requests to retry")
+        output_dir = self.start(
+            config_path=self.output_dir / "config.json",
+            start="classify",
+        )
+        return output_dir, removed
 
     def join(self, timeout: float | None = None) -> None:
         thread = self._thread

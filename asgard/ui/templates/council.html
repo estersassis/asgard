@@ -28,11 +28,14 @@
           </div>
         </div>
       </div>
-      <p class="council-loop" id="council-loop" hidden>
-        Approved on round I <span class="council-loop-val" id="council-rate-i">—</span>
-        → final <span class="council-loop-val" id="council-rate-final">—</span>
-        · mean <span class="council-loop-val" id="council-mean">—</span> rounds
-      </p>
+      <div class="council-hero-actions">
+        <p class="council-loop" id="council-loop" hidden>
+          Approved on round I <span class="council-loop-val" id="council-rate-i">—</span>
+          → final <span class="council-loop-val" id="council-rate-final">—</span>
+          · mean <span class="council-loop-val" id="council-mean">—</span> rounds
+        </p>
+        <button type="button" class="link" id="council-retry-all" hidden>Retry all errors</button>
+      </div>
     </div>
 
     <div class="council-columns">
@@ -52,6 +55,7 @@
           The classifier is reading this pull request…
         </p>
         <p class="council-error" id="council-error" hidden></p>
+        <button type="button" class="link" id="council-retry" hidden>Retry this PR</button>
 
         <ol class="council-rounds" id="council-rounds"></ol>
       </section>

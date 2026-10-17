@@ -399,6 +399,8 @@ def test_council_page_assets() -> None:
     assert 'id="council-not-security"' in page.text
     assert 'id="council-unresolved"' in page.text
     assert 'id="council-error-total"' in page.text
+    assert 'id="council-retry"' in page.text
+    assert 'id="council-retry-all"' in page.text
     assert 'id="council-loop"' in page.text
     assert 'aria-label="Pull requests"' in page.text
     assert 'aria-label="Status filter"' in page.text
@@ -439,6 +441,7 @@ def test_council_page_assets() -> None:
     assert "/classify/metrics" in js.text
     assert "/classify/output" in js.text
     assert "/classify/items" in js.text
+    assert "/classify/retry" in js.text
     assert "/prefilter/output" in js.text
     assert "/mine/index" in js.text
     assert '"why"' in js.text or "why" in js.text

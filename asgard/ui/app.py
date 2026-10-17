@@ -87,6 +87,11 @@ class ResumeRunBody(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class RetryClassifyBody(BaseModel):
+    pr_ids: list[str] = Field(default_factory=list)
+    all_errors: bool = False
+
+
 class RegenerateBody(BaseModel):
     from_stage: str = Field(default="synthesize", alias="from")
     prompt: str | None = None
@@ -311,6 +316,29 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         run_id = store.bind_stable_id(session)
         return {"id": run_id, "output_dir": str(output_dir)}
+
+    @app.post("/api/runs/{run_id}/classify/retry")
+    async def retry_classify(run_id: str, body: RetryClassifyBody) -> dict[str, Any]:
+        session = _session_or_404(run_id)
+        if not body.all_errors and not body.pr_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="pass pr_ids or all_errors",
+            )
+        try:
+            session.join(timeout=30)
+            output_dir, removed = session.retry_classify(
+                body.pr_ids,
+                all_errors=body.all_errors,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        run_id = store.bind_stable_id(session)
+        return {
+            "id": run_id,
+            "output_dir": str(output_dir),
+            "pr_ids": removed,
+        }
 
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str) -> EventSourceResponse:

@@ -58,6 +58,8 @@
     title: document.getElementById("council-pr-title"),
     waiting: document.getElementById("council-waiting"),
     error: document.getElementById("council-error"),
+    retry: document.getElementById("council-retry"),
+    retryAll: document.getElementById("council-retry-all"),
     rounds: document.getElementById("council-rounds"),
     prTemplate: document.getElementById("council-pr-template"),
     roundTemplate: document.getElementById("council-round-template"),
@@ -74,6 +76,7 @@
     classifyDone: false,
     source: null,
     seen: {},
+    retrying: false,
   };
 
   function emptyPr(prId) {
@@ -100,8 +103,8 @@
     return state.prs[prId];
   }
 
-  function api(path) {
-    return fetch("/api/runs/" + encodeURIComponent(runId) + path).then(
+  function api(path, options) {
+    return fetch("/api/runs/" + encodeURIComponent(runId) + path, options || {}).then(
       function (response) {
         return response.text().then(function (text) {
           var body = text;
@@ -117,6 +120,57 @@
         });
       }
     );
+  }
+
+  function resetPrForRetry(prId) {
+    var pr = ensurePr(prId);
+    pr.phase = "classifying";
+    pr.status = null;
+    pr.error = "";
+    pr.rounds = [];
+    pr.attempts = 0;
+    pr.decision = null;
+    pr.iterations = 0;
+    pr.liveRound = null;
+  }
+
+  function retryClassify(options) {
+    if (state.retrying) return Promise.resolve();
+    var body = options || {};
+    state.retrying = true;
+    render();
+    return api("/classify/retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(function (result) {
+        if (!result.ok) {
+          var detail =
+            result.body && result.body.detail
+              ? result.body.detail
+              : "Could not retry classify";
+          throw new Error(typeof detail === "string" ? detail : "Could not retry classify");
+        }
+        var ids = Array.isArray(result.body.pr_ids) ? result.body.pr_ids : [];
+        ids.forEach(resetPrForRetry);
+        state.classifyDone = false;
+        state.metrics = null;
+        recountTotalsFromPrs();
+        openSource();
+        render();
+      })
+      .catch(function (err) {
+        var pr = state.selected ? state.prs[state.selected] : null;
+        if (pr && pr.status === "error") {
+          pr.error = err.message || String(err);
+        }
+        render();
+      })
+      .then(function () {
+        state.retrying = false;
+        render();
+      });
   }
 
   function parseJsonl(text) {
@@ -384,6 +438,28 @@
         }
       }
       var bucket = bucketOf(payload.status, decision);
+      if (bucket === "security") security += 1;
+      else if (bucket === "not security") notSecurity += 1;
+      else if (bucket === "unresolved") unresolved += 1;
+      else if (bucket === "error") error += 1;
+    });
+    state.totals = {
+      security: security,
+      notSecurity: notSecurity,
+      unresolved: unresolved,
+      error: error,
+    };
+  }
+
+  function recountTotalsFromPrs() {
+    var security = 0;
+    var notSecurity = 0;
+    var unresolved = 0;
+    var error = 0;
+    state.order.forEach(function (prId) {
+      var pr = state.prs[prId];
+      if (!pr) return;
+      var bucket = shortOf(pr);
       if (bucket === "security") security += 1;
       else if (bucket === "not security") notSecurity += 1;
       else if (bucket === "unresolved") unresolved += 1;
@@ -733,12 +809,20 @@
       els.notSecurity.textContent = "—";
       els.unresolved.textContent = "—";
       if (els.errorTotal) els.errorTotal.textContent = "—";
+      if (els.retryAll) els.retryAll.hidden = true;
       return;
     }
     els.security.textContent = String(state.totals.security);
     els.notSecurity.textContent = String(state.totals.notSecurity);
     els.unresolved.textContent = String(state.totals.unresolved);
     if (els.errorTotal) els.errorTotal.textContent = String(state.totals.error || 0);
+    if (els.retryAll) {
+      var n = state.totals.error || 0;
+      els.retryAll.hidden = n < 1 || state.retrying;
+      els.retryAll.disabled = state.retrying;
+      els.retryAll.textContent =
+        n === 1 ? "Retry 1 error" : "Retry all " + n + " errors";
+    }
   }
 
   function renderMetrics() {
@@ -950,6 +1034,7 @@
       els.title.textContent = "";
       els.waiting.hidden = true;
       els.error.hidden = true;
+      if (els.retry) els.retry.hidden = true;
       els.rounds.innerHTML = "";
       return;
     }
@@ -967,6 +1052,10 @@
     var showError = pr.status === "error" && pr.error;
     els.error.hidden = !showError;
     els.error.textContent = showError ? pr.error : "";
+    if (els.retry) {
+      els.retry.hidden = pr.status !== "error" || state.retrying;
+      els.retry.disabled = state.retrying;
+    }
 
     if (waiting) {
       els.rounds.innerHTML = "";
@@ -985,6 +1074,18 @@
     renderFilters();
     renderList();
     renderDeliberation();
+  }
+
+  if (els.retry) {
+    els.retry.addEventListener("click", function () {
+      if (!state.selected) return;
+      retryClassify({ pr_ids: [state.selected] });
+    });
+  }
+  if (els.retryAll) {
+    els.retryAll.addEventListener("click", function () {
+      retryClassify({ all_errors: true });
+    });
   }
 
   function closeSource() {

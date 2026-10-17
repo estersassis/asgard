@@ -61,6 +61,14 @@
   color: var(--no);
 }
 
+.council-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px 24px;
+}
+
 .council-loop {
   margin: 0;
   font-size: 13px;
@@ -281,6 +289,10 @@
 .council-error {
   margin: 0;
   color: var(--no);
+}
+
+#council-retry {
+  align-self: flex-start;
 }
 
 .council-rounds {

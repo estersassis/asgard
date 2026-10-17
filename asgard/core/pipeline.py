@@ -1,7 +1,8 @@
 """Build and run the standard ASGARD pipeline. Shared by CLI and UI."""
 
+import json
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,75 @@ def clear_from(run_dir: Path, stage: str) -> None:
     if prompt is not None:
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(prompt, encoding="utf-8")
+
+
+def classify_error_ids(run_dir: Path) -> list[str]:
+    """Return classify checkpoint ids whose payload status is ``error``."""
+    path = run_dir / "classify" / "items.jsonl"
+    if not path.is_file():
+        return []
+    found: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        item_id = row.get("id")
+        payload = row.get("payload")
+        if not isinstance(item_id, str) or not item_id:
+            continue
+        if isinstance(payload, dict) and payload.get("status") == "error":
+            found.append(item_id)
+    return found
+
+
+def drop_classify_items(run_dir: Path, pr_ids: Iterable[str]) -> list[str]:
+    """Drop classify checkpoints for ``pr_ids`` and invalidate later stages.
+
+    Keeps successful classify rows. Removes ``classify/output.json`` (and
+    metrics/trace) so classify can run again, then clears consolidate onward.
+    Returns the ids that were actually removed.
+    """
+    wanted = {item_id for item_id in pr_ids if isinstance(item_id, str) and item_id}
+    if not wanted:
+        return []
+    items_path = run_dir / "classify" / "items.jsonl"
+    if not items_path.is_file():
+        return []
+    kept: list[str] = []
+    removed: list[str] = []
+    for line in items_path.read_text(encoding="utf-8").splitlines():
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            kept.append(line)
+            continue
+        item_id = row.get("id") if isinstance(row, dict) else None
+        if isinstance(item_id, str) and item_id in wanted:
+            removed.append(item_id)
+            continue
+        kept.append(line)
+    if not removed:
+        return []
+    temporary = items_path.with_suffix(".jsonl.tmp")
+    body = "\n".join(kept)
+    if body:
+        body += "\n"
+    temporary.write_text(body, encoding="utf-8")
+    temporary.replace(items_path)
+    classify_dir = run_dir / "classify"
+    for name in ("output.json", "trace.jsonl", "metrics.json"):
+        path = classify_dir / name
+        if path.is_file():
+            path.unlink()
+    clear_from(run_dir, "consolidate")
+    return removed
 
 
 def build_stages(
