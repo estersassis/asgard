@@ -116,8 +116,8 @@ def build_batch_messages(
     ]
     content = (
         "Judge each pair independently. "
-        "description, general_discussion[i], and code_review_threads[j].comments[k] "
-        "belong only to the pull request in that pair.\n\n"
+        "title, description, general_discussion[i], and "
+        "code_review_threads[j].comments[k] belong only to the pull request in that pair.\n\n"
         f"{json.dumps(payload, indent=2)}"
     )
     return [

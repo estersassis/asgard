@@ -22,17 +22,27 @@
             <span class="serif council-total-n is-unresolved" id="council-unresolved">—</span>
             <span class="lbl">unresolved</span>
           </div>
+          <div class="council-total">
+            <span class="serif council-total-n is-error" id="council-error-total">—</span>
+            <span class="lbl">error</span>
+          </div>
         </div>
       </div>
-      <p class="council-loop" id="council-loop" hidden>
-        Approved on round I <span class="council-loop-val" id="council-rate-i">—</span>
-        → final <span class="council-loop-val" id="council-rate-final">—</span>
-        · mean <span class="council-loop-val" id="council-mean">—</span> rounds
-      </p>
+      <div class="council-hero-actions">
+        <p class="council-loop" id="council-loop" hidden>
+          Approved on round I <span class="council-loop-val" id="council-rate-i">—</span>
+          → final <span class="council-loop-val" id="council-rate-final">—</span>
+          · mean <span class="council-loop-val" id="council-mean">—</span> rounds
+        </p>
+        <button type="button" class="link" id="council-retry-all" hidden>Retry all errors</button>
+      </div>
     </div>
 
     <div class="council-columns">
-      <section class="council-prs" aria-label="Pull requests" id="council-prs"></section>
+      <section class="council-prs" aria-label="Pull requests">
+        <div class="council-filters" id="council-filters" role="tablist" aria-label="Status filter"></div>
+        <div id="council-pr-list"></div>
+      </section>
 
       <section class="council-deliberation" aria-label="Deliberation" id="council-deliberation">
         <div class="council-selected">
@@ -45,6 +55,7 @@
           The classifier is reading this pull request…
         </p>
         <p class="council-error" id="council-error" hidden></p>
+        <button type="button" class="link" id="council-retry" hidden>Retry this PR</button>
 
         <ol class="council-rounds" id="council-rounds"></ol>
       </section>

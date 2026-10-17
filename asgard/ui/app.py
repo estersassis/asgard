@@ -22,6 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 from asgard.core.config import (
     ConfigError,
     dump_toml,
+    list_models,
     load_dotenv,
     load_run,
     probe_run,
@@ -66,6 +67,11 @@ class SetupValidateBody(BaseModel):
     secrets: dict[str, str] = Field(default_factory=dict)
 
 
+class SetupModelsBody(BaseModel):
+    provider: str
+    secrets: dict[str, str] = Field(default_factory=dict)
+
+
 class SetupTomlBody(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -79,6 +85,11 @@ class ResumeRunBody(BaseModel):
     rerun: bool = False
 
     model_config = {"populate_by_name": True}
+
+
+class RetryClassifyBody(BaseModel):
+    pr_ids: list[str] = Field(default_factory=list)
+    all_errors: bool = False
 
 
 class RegenerateBody(BaseModel):
@@ -107,19 +118,25 @@ def create_app(
     def _theme(request: Request) -> str:
         return "light" if request.query_params.get("theme") == "light" else "dark"
 
+    def _page(request: Request, screen: str, **extra: Any) -> dict[str, Any]:
+        run = request.query_params.get("run")
+        context: dict[str, Any] = {
+            "screen": screen,
+            "theme": _theme(request),
+            "run": run if isinstance(run, str) and run else None,
+        }
+        context.update(extra)
+        return context
+
     def _screen(request: Request, name: str, numeral: str, label: str) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
             "screen.html",
-            {
-                "screen": name,
-                "numeral": numeral,
-                "label": label,
-                "theme": _theme(request),
-            },
+            _page(request, name, numeral=numeral, label=label),
         )
 
     def _session_or_404(run_id: str) -> RunSession:
+        # get() also opens finished runs from runs/ or tmp/runs by stable id.
         session = store.get(run_id)
         if session is None:
             raise HTTPException(status_code=404, detail="run not found")
@@ -155,7 +172,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "setup.html",
-            {"screen": "setup", "theme": _theme(request)},
+            _page(request, "setup"),
         )
 
     @app.get("/pipeline", response_class=HTMLResponse, name="pipeline")
@@ -163,7 +180,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "pipeline.html",
-            {"screen": "pipeline", "theme": _theme(request)},
+            _page(request, "pipeline"),
         )
 
     @app.get("/council", response_class=HTMLResponse, name="council")
@@ -171,7 +188,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "council.html",
-            {"screen": "council", "theme": _theme(request)},
+            _page(request, "council"),
         )
 
     @app.get("/guideline", response_class=HTMLResponse, name="guideline")
@@ -179,7 +196,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "guideline.html",
-            {"screen": "guideline", "theme": _theme(request)},
+            _page(request, "guideline"),
         )
 
     @app.get("/forge", response_class=HTMLResponse, name="forge")
@@ -209,6 +226,20 @@ def create_app(
         except ConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/api/setup/models")
+    async def setup_models(body: SetupModelsBody) -> dict[str, Any]:
+        if store.dotenv is not None:
+            load_dotenv(store.dotenv)
+        try:
+            models = list_models(
+                body.provider,
+                secrets=body.secrets or None,
+                opener=store.opener,
+            )
+        except ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"provider": body.provider, "models": models}
+
     @app.post("/api/setup/toml")
     async def setup_toml(body: SetupTomlBody) -> PlainTextResponse:
         data = dict(body.overrides or {})
@@ -236,6 +267,10 @@ def create_app(
         data.pop("keys", None)
         return data
 
+    @app.get("/api/runs")
+    async def list_runs() -> list[dict[str, Any]]:
+        return store.list_runs()
+
     @app.post("/api/runs")
     async def start_run(body: StartRunBody) -> dict[str, str]:
         session = store.create()
@@ -247,21 +282,18 @@ def create_app(
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"id": session.id, "output_dir": str(output_dir)}
+        run_id = store.bind_stable_id(session)
+        return {"id": run_id, "output_dir": str(output_dir)}
 
     @app.post("/api/runs/{run_id}/stop")
     async def stop_run(run_id: str) -> dict[str, str]:
-        session = store.get(run_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="run not found")
+        session = _session_or_404(run_id)
         session.stop()
-        return {"id": run_id, "status": "stopping"}
+        return {"id": session.id, "status": "stopping"}
 
     @app.post("/api/runs/{run_id}/resume")
     async def resume_run(run_id: str, body: ResumeRunBody) -> dict[str, str]:
-        session = store.get(run_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="run not found")
+        session = _session_or_404(run_id)
         if body.from_stage not in PIPELINE:
             raise HTTPException(status_code=400, detail=f"unknown stage: {body.from_stage}")
         try:
@@ -269,13 +301,12 @@ def create_app(
             output_dir = session.resume(body.from_stage, rerun=body.rerun)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        run_id = store.bind_stable_id(session)
         return {"id": run_id, "output_dir": str(output_dir)}
 
     @app.post("/api/runs/{run_id}/regenerate")
     async def regenerate_run(run_id: str, body: RegenerateBody) -> dict[str, str]:
-        session = store.get(run_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="run not found")
+        session = _session_or_404(run_id)
         if body.from_stage not in PIPELINE:
             raise HTTPException(status_code=400, detail=f"unknown stage: {body.from_stage}")
         try:
@@ -283,13 +314,35 @@ def create_app(
             output_dir = session.regenerate_from(body.from_stage, prompt=body.prompt)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        run_id = store.bind_stable_id(session)
         return {"id": run_id, "output_dir": str(output_dir)}
+
+    @app.post("/api/runs/{run_id}/classify/retry")
+    async def retry_classify(run_id: str, body: RetryClassifyBody) -> dict[str, Any]:
+        session = _session_or_404(run_id)
+        if not body.all_errors and not body.pr_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="pass pr_ids or all_errors",
+            )
+        try:
+            session.join(timeout=30)
+            output_dir, removed = session.retry_classify(
+                body.pr_ids,
+                all_errors=body.all_errors,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        run_id = store.bind_stable_id(session)
+        return {
+            "id": run_id,
+            "output_dir": str(output_dir),
+            "pr_ids": removed,
+        }
 
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str) -> EventSourceResponse:
-        session = store.get(run_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="run not found")
+        session = _session_or_404(run_id)
 
         async def stream() -> Any:
             while True:
@@ -353,6 +406,42 @@ def create_app(
             _RUN_FILE_MINE_OUTPUT,
             "application/json",
         )
+
+    @app.get("/api/runs/{run_id}/mine/index")
+    async def run_mine_index(run_id: str) -> dict[str, Any]:
+        """Mined PR numbers plus number → node_id (one round-trip for the Council UI)."""
+        session = _session_or_404(run_id)
+        if session.output_dir is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        root = session.output_dir.resolve()
+        output_path = (root / _RUN_FILE_MINE_OUTPUT).resolve()
+        if not output_path.is_relative_to(root) or not output_path.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        try:
+            raw = json.loads(output_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=404, detail="file not found") from None
+        if not isinstance(raw, list):
+            raise HTTPException(status_code=404, detail="file not found")
+        numbers: list[int] = []
+        node_ids: dict[str, str] = {}
+        for item in raw:
+            if not isinstance(item, int) or isinstance(item, bool):
+                continue
+            numbers.append(item)
+            pr_path = (root / "mine" / "prs" / f"{item}.json").resolve()
+            if not pr_path.is_relative_to(root) or not pr_path.is_file():
+                continue
+            try:
+                payload = json.loads(pr_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            node_id = payload.get("node_id")
+            if isinstance(node_id, str) and node_id:
+                node_ids[str(item)] = node_id
+        return {"numbers": numbers, "node_ids": node_ids}
 
     @app.get("/api/runs/{run_id}/mine/prs/{number}")
     async def run_mine_pr(run_id: str, number: str) -> FileResponse:

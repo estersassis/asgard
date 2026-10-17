@@ -8,8 +8,14 @@ from typing import Any
 from pydantic import ValidationError
 
 from asgard.cli.logs import show_logs
+from asgard.cli.pilot import (
+    bundled_pilot_set_help,
+    promote_pilot_command,
+    run_pilot_command,
+)
 from asgard.cli.prompts import list_prompts, save_prompt
 from asgard.core.config import ConfigError, RunConfig, prepare_run
+from asgard.core.pilot.gate import PromoteError
 from asgard.core.pipeline import PIPELINE, run_pipeline
 from asgard.core.sinks import CLIProgressSink, LoggingSink, StreamJSONSink
 from asgard.core.stages.bundle import export_classifications
@@ -36,6 +42,9 @@ def main(
         if args.command == "prompts":
             _run_prompts(args)
             return
+        if args.command == "pilot":
+            _run_pilot(args, handlers=handlers)
+            return
         if args.command == "ui":
             try:
                 from asgard.ui.app import serve
@@ -60,7 +69,7 @@ def main(
             quiet=args.quiet,
             json_logs=args.json_logs,
         )
-    except (ConfigError, ValidationError, ValueError, LookupError) as exc:
+    except (ConfigError, PromoteError, ValidationError, ValueError, LookupError) as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
     except Exception as exc:
@@ -79,6 +88,34 @@ def _run_prompts(args: argparse.Namespace) -> None:
             file=args.file,
             notes=args.notes or "",
             registry_dir=args.registry_dir,
+        )
+        return
+    raise SystemExit(2)
+
+
+def _run_pilot(args: argparse.Namespace, *, handlers: dict[str, Any] | None) -> None:
+    if args.pilot_command == "run":
+        run_pilot_command(
+            candidate=args.candidate,
+            active=args.active,
+            pilot_set=args.pilot_set,
+            config=args.config,
+            f1_min=args.f1_min,
+            kappa_min=args.kappa_min,
+            accuracy_min=args.accuracy_min,
+            precision_min=args.precision_min,
+            recall_min=args.recall_min,
+            output_dir=args.output_dir,
+            registry_dir=args.registry_dir,
+            handlers=handlers,
+        )
+        return
+    if args.pilot_command == "promote":
+        promote_pilot_command(
+            candidate=args.candidate,
+            config=args.config,
+            from_result=args.from_result,
+            force=args.force,
         )
         return
     raise SystemExit(2)
@@ -211,6 +248,62 @@ def _parser() -> argparse.ArgumentParser:
         "--registry-dir",
         type=Path,
         help="prompt registry root (default: ASGARD_PROMPTS_DIR or ~/.asgard/prompts)",
+    )
+    pilot = sub.add_parser(
+        "pilot",
+        help="validate classifier prompts on a labeled pilot set and promote when gates pass",
+    )
+    pilot_sub = pilot.add_subparsers(dest="pilot_command", required=True)
+    pilot_run = pilot_sub.add_parser(
+        "run",
+        help="compare active vs candidate on a pilot set (temperature forced to 0)",
+    )
+    pilot_run.add_argument("--candidate", required=True, help="candidate classifier prompt id")
+    pilot_run.add_argument(
+        "--active",
+        help="active classifier prompt id (default: [prompts].classifier from config)",
+    )
+    pilot_run.add_argument(
+        "--pilot-set",
+        default="example",
+        help=bundled_pilot_set_help(),
+    )
+    pilot_run.add_argument("--config", type=Path, help="run settings TOML/JSON (LLM + prompts)")
+    pilot_run.add_argument("--f1-min", type=float, default=0.90)
+    pilot_run.add_argument("--kappa-min", type=float, default=0.80)
+    pilot_run.add_argument("--accuracy-min", type=float, default=None)
+    pilot_run.add_argument("--precision-min", type=float, default=None)
+    pilot_run.add_argument("--recall-min", type=float, default=None)
+    pilot_run.add_argument(
+        "--output-dir",
+        type=Path,
+        help="write metrics.json / predictions.jsonl here (default: runs/_pilot/<stamp>/)",
+    )
+    pilot_run.add_argument(
+        "--registry-dir",
+        type=Path,
+        help="prompt registry root (default: config prompts.registry_dir or ASGARD_PROMPTS_DIR)",
+    )
+    pilot_promote = pilot_sub.add_parser(
+        "promote",
+        help="write [prompts].classifier when the last (or given) pilot run cleared gates",
+    )
+    pilot_promote.add_argument("--candidate", required=True, help="classifier prompt id to promote")
+    pilot_promote.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="TOML settings file whose [prompts] table is updated",
+    )
+    pilot_promote.add_argument(
+        "--from-result",
+        type=Path,
+        help="metrics.json from a pilot run (default: newest under runs/_pilot/)",
+    )
+    pilot_promote.add_argument(
+        "--force",
+        action="store_true",
+        help="update config even when gates failed or no pilot result is available",
     )
     return parser
 

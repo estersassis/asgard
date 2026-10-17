@@ -86,6 +86,11 @@ select.inp {
   cursor: pointer;
 }
 
+select.inp option {
+  background: var(--stone);
+  color: var(--ink);
+}
+
 .inp:focus {
   outline: none;
   border-bottom-color: var(--ember);

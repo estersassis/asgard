@@ -73,6 +73,7 @@ Role colors are fixed across screens: **Classifier = ember**, **Evaluator = bifr
 Visible: Repository, GitHub token, Provider + Model, then **one credential field per provider in use**, then `+ More options`, the **Start run** button and `Load / Save asgard.toml`.
 
 - Credentials follow every role, not only the default. If any role resolves to Ollama, show **Ollama host** (default `http://localhost:11434`, the same as `OLLAMA_HOST`). For each commercial provider in use, show its **API key** (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). The value comes from `.env` when present and is never written to `config.json`.
+- Model is a select filled from `/api/setup/models` (Ollama tags, Gemini `generateContent` models, OpenAI chat models, Anthropic models) using the credential for that provider.
 - Validation hints come from the existing Stage 0 checks: the token can see the repository, and each configured endpoint answers.
 - `+ More options`: Max PRs, State, Since, Until, Max iterations, Batch size (#41), Pre-filter (#7), and the model per role (Classifier, Evaluator, Synthesizer; `default` inherits `[llm.default]`).
 - Maps 1:1 to `RunConfig` / `asgard.toml`.

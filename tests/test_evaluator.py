@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from asgard.core.classification import Classification, Evidence
-from asgard.core.evaluation import Evaluation, evaluate
+from asgard.core.evaluation import Evaluation, evaluate, verdict_event
 from asgard.core.events import EvaluatorVerdict
 from asgard.core.normalization import (
     CodeReviewThread,
@@ -110,7 +110,7 @@ def test_fabricated_quote_revises_without_calling_the_model() -> None:
     )
     assert "literal" in result.feedback
     assert quote in result.feedback
-    assert events == [EvaluatorVerdict(pr_id="42", approved=False)]
+    assert events == [verdict_event("42", result)]
     assert handler.calls == []
 
 
@@ -124,7 +124,7 @@ def test_invalid_location_revises_without_calling_the_model() -> None:
     assert result.verdict == "REVISE"
     assert result.findings[1].passed is False
     assert "general_discussion[3]" in result.findings[1].explanation
-    assert events == [EvaluatorVerdict(pr_id="42", approved=False)]
+    assert events == [verdict_event("42", result)]
     assert handler.calls == []
 
 
@@ -142,7 +142,7 @@ def test_empty_evidence_revises_without_calling_the_model() -> None:
     assert result.verdict == "REVISE"
     assert result.findings[1].passed is False
     assert "empty" in result.findings[1].explanation
-    assert events == [EvaluatorVerdict(pr_id="42", approved=False)]
+    assert events == [verdict_event("42", result)]
     assert handler.calls == []
 
 
@@ -157,7 +157,7 @@ def test_approve_emits_verdict_and_sends_pr_and_classification() -> None:
     assert result.verdict == "APPROVE"
     assert [finding.criterion for finding in result.findings] == list(_CRITERIA)
     assert all(finding.passed for finding in result.findings)
-    assert events == [EvaluatorVerdict(pr_id="42", approved=True)]
+    assert events == [verdict_event("42", result)]
     user = handler.calls[0][1].content
     assert pull.model_dump_json(indent=2) in user
     assert classification.model_dump_json(indent=2) in user
@@ -173,7 +173,7 @@ def test_model_revise_keeps_feedback_and_rejects() -> None:
     assert result.verdict == "REVISE"
     assert result.feedback == feedback
     assert result.findings[0].passed is False
-    assert events == [EvaluatorVerdict(pr_id="42", approved=False)]
+    assert events == [verdict_event("42", result)]
 
 
 def test_invalid_json_on_both_attempts_raises_without_event() -> None:

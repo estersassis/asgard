@@ -12,6 +12,15 @@
   ];
 
   var FINDING_ORDER = ["decision", "evidence", "completeness", "rationale"];
+  var STATUS_FILTERS = [
+    "all",
+    "classifying",
+    "review",
+    "security",
+    "not security",
+    "unresolved",
+    "error",
+  ];
   var ROMAN = [
     "I",
     "II",
@@ -38,15 +47,19 @@
     security: document.getElementById("council-security"),
     notSecurity: document.getElementById("council-not-security"),
     unresolved: document.getElementById("council-unresolved"),
+    errorTotal: document.getElementById("council-error-total"),
     loop: document.getElementById("council-loop"),
     rateI: document.getElementById("council-rate-i"),
     rateFinal: document.getElementById("council-rate-final"),
     mean: document.getElementById("council-mean"),
-    prs: document.getElementById("council-prs"),
+    filters: document.getElementById("council-filters"),
+    prs: document.getElementById("council-pr-list"),
     status: document.getElementById("council-status"),
     title: document.getElementById("council-pr-title"),
     waiting: document.getElementById("council-waiting"),
     error: document.getElementById("council-error"),
+    retry: document.getElementById("council-retry"),
+    retryAll: document.getElementById("council-retry-all"),
     rounds: document.getElementById("council-rounds"),
     prTemplate: document.getElementById("council-pr-template"),
     roundTemplate: document.getElementById("council-round-template"),
@@ -56,12 +69,14 @@
     order: [],
     prs: {},
     selected: null,
+    statusFilter: "all",
     why: null,
     totals: null,
     metrics: null,
     classifyDone: false,
     source: null,
     seen: {},
+    retrying: false,
   };
 
   function emptyPr(prId) {
@@ -88,8 +103,8 @@
     return state.prs[prId];
   }
 
-  function api(path) {
-    return fetch("/api/runs/" + encodeURIComponent(runId) + path).then(
+  function api(path, options) {
+    return fetch("/api/runs/" + encodeURIComponent(runId) + path, options || {}).then(
       function (response) {
         return response.text().then(function (text) {
           var body = text;
@@ -105,6 +120,62 @@
         });
       }
     );
+  }
+
+  function resetPrForRetry(prId) {
+    var pr = ensurePr(prId);
+    pr.phase = "classifying";
+    pr.status = null;
+    pr.error = "";
+    pr.rounds = [];
+    pr.attempts = 0;
+    pr.decision = null;
+    pr.iterations = 0;
+    pr.liveRound = null;
+  }
+
+  function retryClassify(options) {
+    if (state.retrying) return Promise.resolve();
+    var body = options || {};
+    state.retrying = true;
+    render();
+    return api("/classify/retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(function (result) {
+        if (!result.ok) {
+          var detail =
+            result.body && result.body.detail
+              ? result.body.detail
+              : "Could not retry classify";
+          throw new Error(typeof detail === "string" ? detail : "Could not retry classify");
+        }
+        var ids = Array.isArray(result.body.pr_ids) ? result.body.pr_ids : [];
+        ids.forEach(resetPrForRetry);
+        state.classifyDone = false;
+        state.metrics = null;
+        recountTotalsFromPrs();
+        openSource();
+        render();
+      })
+      .catch(function (err) {
+        var message = err.message || String(err);
+        return loadItems()
+          .catch(function () {
+            /* ignore */
+          })
+          .then(function () {
+            var pr = state.selected ? state.prs[state.selected] : null;
+            if (pr) pr.error = message;
+            render();
+          });
+      })
+      .then(function () {
+        state.retrying = false;
+        render();
+      });
   }
 
   function parseJsonl(text) {
@@ -150,7 +221,8 @@
       if (decision === false) return "not security";
       return null;
     }
-    if (status === "error" || (typeof status === "string" && status.indexOf("unresolved_") === 0)) {
+    if (status === "error") return "error";
+    if (typeof status === "string" && status.indexOf("unresolved_") === 0) {
       return "unresolved";
     }
     return null;
@@ -312,7 +384,8 @@
         verdict: verdict ? String(verdict).toLowerCase() : null,
         findings: findings,
         feedback: feedbackOf(eParsed),
-        reviewing: !pair.evaluator,
+        // Only "reviewing" while live; a finished PR with no evaluator ended early.
+        awaitingEvaluator: !pair.evaluator,
       };
     });
   }
@@ -359,6 +432,7 @@
     var security = 0;
     var notSecurity = 0;
     var unresolved = 0;
+    var error = 0;
     payloads.forEach(function (payload) {
       if (!payload || typeof payload !== "object") return;
       var decision = null;
@@ -372,11 +446,35 @@
       if (bucket === "security") security += 1;
       else if (bucket === "not security") notSecurity += 1;
       else if (bucket === "unresolved") unresolved += 1;
+      else if (bucket === "error") error += 1;
     });
     state.totals = {
       security: security,
       notSecurity: notSecurity,
       unresolved: unresolved,
+      error: error,
+    };
+  }
+
+  function recountTotalsFromPrs() {
+    var security = 0;
+    var notSecurity = 0;
+    var unresolved = 0;
+    var error = 0;
+    state.order.forEach(function (prId) {
+      var pr = state.prs[prId];
+      if (!pr) return;
+      var bucket = shortOf(pr);
+      if (bucket === "security") security += 1;
+      else if (bucket === "not security") notSecurity += 1;
+      else if (bucket === "unresolved") unresolved += 1;
+      else if (bucket === "error") error += 1;
+    });
+    state.totals = {
+      security: security,
+      notSecurity: notSecurity,
+      unresolved: unresolved,
+      error: error,
     };
   }
 
@@ -410,36 +508,18 @@
   }
 
   function loadMineNumbers() {
-    return api("/mine/output").then(function (result) {
-      if (!result.ok || !Array.isArray(result.body)) return;
-      var numbers = result.body.filter(function (item) {
+    return api("/mine/index").then(function (result) {
+      if (!result.ok || !result.body || typeof result.body !== "object") return;
+      var numbers = Array.isArray(result.body.numbers) ? result.body.numbers : [];
+      var nodeIds =
+        result.body.node_ids && typeof result.body.node_ids === "object"
+          ? result.body.node_ids
+          : {};
+      numbers = numbers.filter(function (item) {
         return typeof item === "number" && !isNaN(item);
       });
       if (!numbers.length) return;
-      return Promise.all(
-        numbers.map(function (number) {
-          return api("/mine/prs/" + encodeURIComponent(String(number))).then(
-            function (prResult) {
-              var nodeId = null;
-              if (
-                prResult.ok &&
-                prResult.body &&
-                typeof prResult.body === "object" &&
-                typeof prResult.body.node_id === "string"
-              ) {
-                nodeId = prResult.body.node_id;
-              }
-              return { number: number, nodeId: nodeId };
-            }
-          );
-        })
-      ).then(function (rows) {
-        var nodeIds = {};
-        rows.forEach(function (row) {
-          if (row && row.nodeId) nodeIds[row.number] = row.nodeId;
-        });
-        resolveDisplayNumbers(numbers, nodeIds);
-      });
+      resolveDisplayNumbers(numbers, nodeIds);
     });
   }
 
@@ -448,6 +528,7 @@
       if (!result.ok) return;
       var rows = parseJsonl(result.text);
       var payloads = [];
+      var seen = {};
       rows.forEach(function (row) {
         if (!row || typeof row !== "object") return;
         var payload = row.payload;
@@ -462,9 +543,19 @@
         var pr = ensurePr(prId);
         applyTerminal(pr, payload);
         payloads.push(payload);
+        seen[prId] = true;
+      });
+      // Dropped error checkpoints (retry) must not stay painted as error from the log.
+      state.order.forEach(function (prId) {
+        var pr = state.prs[prId];
+        if (!pr || seen[prId]) return;
+        if (pr.status !== "error") return;
+        resetPrForRetry(prId);
       });
       if (payloads.length && !state.classifyDone) {
         recountTotalsFromPayloads(payloads);
+      } else {
+        recountTotalsFromPrs();
       }
     });
   }
@@ -531,6 +622,54 @@
     return true;
   }
 
+  function findingsFromEvent(raw) {
+    if (!Array.isArray(raw) || !raw.length) return [];
+    var byName = {};
+    raw.forEach(function (finding) {
+      if (!finding || typeof finding !== "object") return;
+      if (typeof finding.criterion === "string") byName[finding.criterion] = finding;
+    });
+    return FINDING_ORDER.map(function (name) {
+      var finding = byName[name];
+      if (!finding) {
+        return { c: name, passed: false, text: "" };
+      }
+      return {
+        c: name,
+        passed: !!finding.passed,
+        text: typeof finding.explanation === "string" ? finding.explanation : "",
+      };
+    });
+  }
+
+  function upsertLiveRound(pr, patch) {
+    var iteration = pr.liveRound || pr.attempts || 1;
+    var existing = null;
+    for (var i = 0; i < pr.rounds.length; i += 1) {
+      if (pr.rounds[i].iteration === iteration) {
+        existing = pr.rounds[i];
+        break;
+      }
+    }
+    if (!existing) {
+      existing = {
+        n: roman(iteration),
+        iteration: iteration,
+        decision: null,
+        quote: "",
+        verdict: null,
+        findings: [],
+        feedback: "",
+        awaitingEvaluator: true,
+      };
+      pr.rounds.push(existing);
+    }
+    Object.keys(patch).forEach(function (key) {
+      existing[key] = patch[key];
+    });
+    return existing;
+  }
+
   function onClassificationAttempt(event) {
     var prId = event.pr_id;
     if (typeof prId !== "string") return;
@@ -539,7 +678,18 @@
     pr.attempts += 1;
     pr.phase = "review";
     pr.liveRound = pr.attempts;
-    pr.rounds = [];
+    var decision = null;
+    if (typeof event.has_security_discussion === "boolean") {
+      decision = event.has_security_discussion;
+    }
+    upsertLiveRound(pr, {
+      decision: decisionLabel(decision),
+      quote: typeof event.quote === "string" ? event.quote : "",
+      verdict: null,
+      findings: [],
+      feedback: "",
+      awaitingEvaluator: true,
+    });
   }
 
   function onEvaluatorVerdict(event) {
@@ -547,9 +697,16 @@
     if (typeof prId !== "string") return;
     var pr = ensurePr(prId);
     if (pr.phase === "done") return;
+    var findings = findingsFromEvent(event.findings);
+    var feedback = typeof event.feedback === "string" ? event.feedback : "";
+    upsertLiveRound(pr, {
+      verdict: event.approved === true ? "approve" : "revise",
+      findings: findings,
+      feedback: feedback,
+      awaitingEvaluator: false,
+    });
     if (event.approved === true) return;
     pr.phase = "classifying";
-    pr.rounds = [];
   }
 
   function onLoopFinished(event, live) {
@@ -621,6 +778,29 @@
     render();
   }
 
+  function setStatusFilter(filter) {
+    if (STATUS_FILTERS.indexOf(filter) < 0) return;
+    state.statusFilter = filter;
+    state.why = null;
+    var visible = visibleOrder();
+    if (visible.indexOf(state.selected) < 0) {
+      state.selected = visible.length ? visible[0] : null;
+    }
+    render();
+  }
+
+  function matchesFilter(pr) {
+    if (state.statusFilter === "all") return true;
+    return shortOf(pr) === state.statusFilter;
+  }
+
+  function visibleOrder() {
+    return state.order.filter(function (prId) {
+      var pr = state.prs[prId];
+      return pr && matchesFilter(pr);
+    });
+  }
+
   function toggleWhy(key) {
     state.why = state.why === key ? null : key;
     render();
@@ -644,11 +824,21 @@
       els.security.textContent = "—";
       els.notSecurity.textContent = "—";
       els.unresolved.textContent = "—";
+      if (els.errorTotal) els.errorTotal.textContent = "—";
+      if (els.retryAll) els.retryAll.hidden = true;
       return;
     }
     els.security.textContent = String(state.totals.security);
     els.notSecurity.textContent = String(state.totals.notSecurity);
     els.unresolved.textContent = String(state.totals.unresolved);
+    if (els.errorTotal) els.errorTotal.textContent = String(state.totals.error || 0);
+    if (els.retryAll) {
+      var n = state.totals.error || 0;
+      els.retryAll.hidden = n < 1 || state.retrying;
+      els.retryAll.disabled = state.retrying;
+      els.retryAll.textContent =
+        n === 1 ? "Retry 1 error" : "Retry all " + n + " errors";
+    }
   }
 
   function renderMetrics() {
@@ -662,10 +852,32 @@
     els.loop.hidden = false;
   }
 
+  function renderFilters() {
+    if (!els.filters) return;
+    els.filters.innerHTML = "";
+    STATUS_FILTERS.forEach(function (filter) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "council-filter";
+      button.setAttribute("role", "tab");
+      button.setAttribute(
+        "aria-selected",
+        filter === state.statusFilter ? "true" : "false"
+      );
+      if (filter === state.statusFilter) button.classList.add("on");
+      button.textContent = filter;
+      button.addEventListener("click", function () {
+        setStatusFilter(filter);
+      });
+      els.filters.appendChild(button);
+    });
+  }
+
   function renderList() {
+    if (!els.prs) return;
     els.prs.innerHTML = "";
     if (!els.prTemplate) return;
-    state.order.forEach(function (prId) {
+    visibleOrder().forEach(function (prId) {
       var pr = state.prs[prId];
       if (!pr) return;
       var node = els.prTemplate.content.firstElementChild.cloneNode(true);
@@ -735,10 +947,10 @@
         n: roman(pr.attempts || 1),
         decision: null,
         quote: "",
-        verdict: "reviewing…",
+        verdict: null,
         findings: [],
         feedback: "",
-        reviewing: true,
+        awaitingEvaluator: true,
       });
     }
 
@@ -766,12 +978,37 @@
         quote.textContent = "";
       }
 
-      var verdictText = round.verdict || (round.reviewing ? "reviewing…" : "—");
+      var liveReview =
+        !!(round.awaitingEvaluator || round.reviewing) &&
+        (pr.phase === "review" || pr.phase === "classifying");
+      var verdictText = round.verdict;
+      var stopNote = "";
+      if (!verdictText) {
+        if (liveReview) {
+          verdictText = "reviewing…";
+        } else if (pr.status === "unresolved_no_progress") {
+          verdictText = "no progress";
+          stopNote = "Classifier repeated the same answer; evaluation did not run again.";
+        } else if (pr.status === "unresolved_max_iter") {
+          verdictText = "unresolved";
+        } else if (pr.status === "error") {
+          verdictText = "error";
+        } else {
+          verdictText = "—";
+        }
+      }
       verdict.textContent = "Evaluator · " + verdictText;
       verdict.classList.remove("is-approve", "is-revise", "is-reviewing");
       if (verdictText === "approve") verdict.classList.add("is-approve");
       else if (verdictText === "revise") verdict.classList.add("is-revise");
       else if (verdictText === "reviewing…") verdict.classList.add("is-reviewing");
+      else if (
+        verdictText === "no progress" ||
+        verdictText === "unresolved" ||
+        verdictText === "error"
+      ) {
+        verdict.classList.add("is-revise");
+      }
 
       var key = pr.prId + ":" + round.n;
       var open = state.why === key;
@@ -789,11 +1026,13 @@
       } else {
         findingsBox.hidden = true;
         whyList.hidden = true;
+        whyBtn.onclick = null;
       }
 
-      if (round.feedback) {
+      var feedbackText = round.feedback || stopNote;
+      if (feedbackText) {
         feedback.hidden = false;
-        feedback.textContent = round.feedback;
+        feedback.textContent = feedbackText;
       } else {
         feedback.hidden = true;
         feedback.textContent = "";
@@ -811,6 +1050,7 @@
       els.title.textContent = "";
       els.waiting.hidden = true;
       els.error.hidden = true;
+      if (els.retry) els.retry.hidden = true;
       els.rounds.innerHTML = "";
       return;
     }
@@ -822,12 +1062,16 @@
     if (klass) els.status.classList.add(klass);
     els.title.textContent = pr.title || pr.prId;
 
-    var waiting = pr.phase === "classifying";
-    els.waiting.hidden = !waiting;
+    var waiting = pr.phase === "classifying" && !pr.rounds.length;
+    els.waiting.hidden = !(pr.phase === "classifying");
 
     var showError = pr.status === "error" && pr.error;
     els.error.hidden = !showError;
     els.error.textContent = showError ? pr.error : "";
+    if (els.retry) {
+      els.retry.hidden = pr.status !== "error" || state.retrying;
+      els.retry.disabled = state.retrying;
+    }
 
     if (waiting) {
       els.rounds.innerHTML = "";
@@ -837,13 +1081,27 @@
   }
 
   function render() {
-    if (!state.selected && state.order.length) {
-      state.selected = state.order[0];
+    var visible = visibleOrder();
+    if (!state.selected || visible.indexOf(state.selected) < 0) {
+      state.selected = visible.length ? visible[0] : null;
     }
     renderTotals();
     renderMetrics();
+    renderFilters();
     renderList();
     renderDeliberation();
+  }
+
+  if (els.retry) {
+    els.retry.addEventListener("click", function () {
+      if (!state.selected) return;
+      retryClassify({ pr_ids: [state.selected] });
+    });
+  }
+  if (els.retryAll) {
+    els.retryAll.addEventListener("click", function () {
+      retryClassify({ all_errors: true });
+    });
   }
 
   function closeSource() {
@@ -919,12 +1177,13 @@
           /* display ids stay as stored pr_id */
         })
         .then(function () {
+          if (log.ok) hydrateFromLog(log.text);
+        })
+        .then(function () {
+          // items.jsonl is the source of truth over historical log events.
           return loadItems().catch(function () {
             /* no items yet */
           });
-        })
-        .then(function () {
-          if (log.ok) hydrateFromLog(log.text);
         })
         .then(function () {
           return loadFinishedArtifacts().catch(function () {

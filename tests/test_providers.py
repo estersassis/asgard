@@ -231,6 +231,37 @@ def test_gemini_json_schema_drops_keywords_the_api_rejects(
     assert schema["properties"]["evidence"]["items"]["$ref"] == "#/$defs/Evidence"
 
 
+def test_anthropic_reports_truncated_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from asgard.providers.handlers.anthropic import AnthropicHandler
+
+    class _Messages:
+        def create(self, **kwargs: object) -> object:
+            assert kwargs["max_tokens"] >= 16384
+            block = type("Block", (), {"type": "text", "text": '{"verdict":'})()
+            return type(
+                "Response",
+                (),
+                {
+                    "content": [block],
+                    "stop_reason": "max_tokens",
+                    "usage": type("Usage", (), {"input_tokens": 1, "output_tokens": 2})(),
+                },
+            )()
+
+    class _Client:
+        def __init__(self, api_key: str) -> None:
+            self.messages = _Messages()
+
+    monkeypatch.setattr("asgard.providers.handlers.anthropic.Anthropic", _Client)
+    with pytest.raises(ProviderError, match="truncated at max_tokens"):
+        AnthropicHandler("claude-haiku-5-5", "key").generate(
+            [Message(role="user", content="review")],
+            schema=Classification,
+        )
+
+
 def test_providers_do_not_import_core_or_interfaces() -> None:
     forbidden = ("asgard.cli", "asgard.ui", "asgard.core")
     for path in PROVIDERS_ROOT.rglob("*.py"):

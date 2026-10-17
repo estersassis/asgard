@@ -22,11 +22,11 @@ from asgard.core.evaluation import (
     Evaluation,
     deterministic_review,
     evaluate,
+    verdict_event,
 )
 from asgard.core.events import (
     ClassificationAttempt,
     ClassifyProgress,
-    EvaluatorVerdict,
     LoopFinished,
 )
 from asgard.core.normalization import NormalizedPullRequest
@@ -294,7 +294,14 @@ class ClassifyStage(Stage):
         emit: bool = True,
     ) -> None:
         if emit:
-            ctx.emit(ClassificationAttempt(pr_id=review.pull.context.pr_id))
+            quote = arrived.evidence[0].quote if arrived.evidence else None
+            ctx.emit(
+                ClassificationAttempt(
+                    pr_id=review.pull.context.pr_id,
+                    has_security_discussion=arrived.has_security_discussion,
+                    quote=quote,
+                )
+            )
         if review.classification is not None and arrived == review.classification:
             review.status = "unresolved_no_progress"
             review.done = True
@@ -355,12 +362,7 @@ class ClassifyStage(Stage):
                 continue
             evaluation = _evaluation_from(item)
             review.evaluation = evaluation
-            ctx.emit(
-                EvaluatorVerdict(
-                    pr_id=review.pull.context.pr_id,
-                    approved=evaluation.verdict == "APPROVE",
-                )
-            )
+            ctx.emit(verdict_event(review.pull.context.pr_id, evaluation))
 
     def _evaluate_solo(self, ctx: RunContext, review: _PullReview) -> None:
         classification = review.classification

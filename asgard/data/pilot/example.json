@@ -1,0 +1,104 @@
+{
+  "id": "example",
+  "name": "Example pilot set",
+  "items": [
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "acme/app",
+          "pr_id": "42",
+          "title": "Fix authentication bypass",
+          "state": "open",
+          "is_merged": false
+        },
+        "description": "The login handler allowed an authentication bypass when the session cookie was missing. This change rejects unauthenticated requests before reading the account id.",
+        "general_discussion": [
+          "Good catch — that path skipped the ownership check.",
+          "Can we add a regression test for the missing-cookie case?"
+        ],
+        "code_review_threads": [
+          {
+            "scope": "app/auth/views.py",
+            "comments": [
+              "Should we return 401 instead of 403 here?",
+              "401 matches the other auth endpoints. Updated."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "acme/app",
+          "pr_id": "55",
+          "title": "Escape user HTML in the profile page",
+          "state": "MERGED",
+          "is_merged": true
+        },
+        "description": "User-supplied bio text was rendered without escaping, which allowed stored XSS. Escape the bio before inserting it into the template.",
+        "general_discussion": [
+          "Confirmed the payload in the QA notes reproduces the XSS.",
+          "Ship it with the hotfix label."
+        ],
+        "code_review_threads": [
+          {
+            "scope": "app/templates/profile.html",
+            "comments": [
+              "Prefer the autoescape block over manual |escape.",
+              "Done — switched to autoescape."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "acme/app",
+          "pr_id": "7",
+          "title": "Rename the submit button label",
+          "state": "open",
+          "is_merged": false
+        },
+        "description": "Rename the primary submit button from \"Save\" to \"Save changes\" so the copy matches the rest of the settings screens.",
+        "general_discussion": [
+          "Looks fine. No behavior change."
+        ],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "acme/app",
+          "pr_id": "18",
+          "title": "Extract helper for formatting dates",
+          "state": "MERGED",
+          "is_merged": true
+        },
+        "description": "Move the duplicated date-formatting snippets into a shared helper used by the dashboard and export views.",
+        "general_discussion": [
+          "Nice cleanup. Please keep the existing ISO format."
+        ],
+        "code_review_threads": [
+          {
+            "scope": "app/utils/dates.py",
+            "comments": [
+              "Add a short docstring for the timezone argument.",
+              "Added."
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

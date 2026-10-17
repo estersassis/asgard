@@ -113,16 +113,25 @@ def _parse_json(text: str) -> Any:
         pass
     starts = [index for index in (stripped.find("{"), stripped.find("[")) if index != -1]
     if not starts:
-        raise ValueError("response is not JSON")
+        raise ValueError(_not_json(stripped))
     start = min(starts)
     end_char = "}" if stripped[start] == "{" else "]"
     end = stripped.rfind(end_char)
     if end <= start:
-        raise ValueError("response is not JSON")
+        raise ValueError(_not_json(stripped))
     try:
         return json.loads(stripped[start : end + 1])
     except json.JSONDecodeError as exc:
-        raise ValueError("response is not JSON") from exc
+        raise ValueError(_not_json(stripped)) from exc
+
+
+def _not_json(text: str) -> str:
+    preview = text.replace("\n", " ").strip()
+    if len(preview) > 160:
+        preview = preview[:160] + "…"
+    if not preview:
+        return "response is not JSON (empty)"
+    return f"response is not JSON ({preview!r})"
 
 
 def _retryable(error: ProviderError) -> bool:

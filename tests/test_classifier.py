@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from asgard.core.classification import Classification, classify
+from asgard.core.classification import BatchClassification, Classification, classify
 from asgard.core.events import ClassificationAttempt
 from asgard.core.normalization import NormalizedPullRequest, PullRequestContext
 from asgard.providers.factory import LLMFactory
@@ -69,7 +69,13 @@ def test_true_decision_emits_attempt_and_sends_pr_text() -> None:
     assert result.evidence[0].quote == "authentication bypass"
     assert result.evidence[0].location == "description"
     assert result.rationale == "The description states an authentication bypass."
-    assert events == [ClassificationAttempt(pr_id="42")]
+    assert events == [
+        ClassificationAttempt(
+            pr_id="42",
+            has_security_discussion=True,
+            quote="authentication bypass",
+        )
+    ]
     user = handler.calls[0][1].content
     assert DESCRIPTION in user
     assert pull.context.title in user
@@ -83,7 +89,9 @@ def test_false_decision_has_empty_evidence() -> None:
 
     assert result.has_security_discussion is False
     assert result.evidence == []
-    assert events == [ClassificationAttempt(pr_id="42")]
+    assert events == [
+        ClassificationAttempt(pr_id="42", has_security_discussion=False, quote=None)
+    ]
 
 
 def test_invalid_json_on_both_attempts_raises_without_event() -> None:
@@ -115,7 +123,13 @@ def test_retry_message_includes_previous_response_and_feedback() -> None:
     user = handler.calls[0][1].content
     assert previous in user
     assert feedback in user
-    assert events == [ClassificationAttempt(pr_id="42")]
+    assert events == [
+        ClassificationAttempt(
+            pr_id="42",
+            has_security_discussion=True,
+            quote="authentication bypass",
+        )
+    ]
 
 
 def test_prompt_source_has_no_owasp_or_nature_labels() -> None:
@@ -138,11 +152,55 @@ def test_incoherent_evidence_fails_validation() -> None:
                 "rationale": "claimed without a quote",
             }
         )
-    with pytest.raises(ValidationError):
-        Classification.model_validate(
-            {
-                "has_security_discussion": False,
-                "evidence": [{"quote": "authentication bypass", "location": "description"}],
-                "rationale": "no security discussion",
-            }
-        )
+    coerced = Classification.model_validate(
+        {
+            "has_security_discussion": False,
+            "evidence": [{"quote": "authentication bypass", "location": "description"}],
+            "rationale": "no security discussion",
+        }
+    )
+    assert coerced.evidence == []
+
+
+def test_title_location_is_accepted_and_context_title_aliases() -> None:
+    classified = Classification.model_validate(
+        {
+            "has_security_discussion": True,
+            "evidence": [
+                {
+                    "quote": "cryptography dependency",
+                    "location": "context.title",
+                }
+            ],
+            "rationale": "The title states a cryptography dependency issue.",
+        }
+    )
+    assert classified.evidence[0].location == "title"
+
+
+def test_false_decision_drops_spurious_evidence() -> None:
+    classified = Classification.model_validate(
+        {
+            "has_security_discussion": False,
+            "evidence": [{"quote": "error handling logic itself", "location": "description"}],
+            "rationale": "The text is about error handling, not security.",
+        }
+    )
+    assert classified.has_security_discussion is False
+    assert classified.evidence == []
+
+    batched = BatchClassification.model_validate(
+        {
+            "results": [
+                {
+                    "pr_id": "873",
+                    "has_security_discussion": False,
+                    "evidence": [
+                        {"quote": "error handling logic itself", "location": "description"}
+                    ],
+                    "rationale": "Not a security discussion.",
+                }
+            ]
+        }
+    )
+    assert batched.results[0].evidence == []
