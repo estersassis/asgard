@@ -22,6 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 from asgard.core.config import (
     ConfigError,
     dump_toml,
+    list_models,
     load_dotenv,
     load_run,
     probe_run,
@@ -66,6 +67,11 @@ class SetupValidateBody(BaseModel):
     secrets: dict[str, str] = Field(default_factory=dict)
 
 
+class SetupModelsBody(BaseModel):
+    provider: str
+    secrets: dict[str, str] = Field(default_factory=dict)
+
+
 class SetupTomlBody(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -107,16 +113,21 @@ def create_app(
     def _theme(request: Request) -> str:
         return "light" if request.query_params.get("theme") == "light" else "dark"
 
+    def _page(request: Request, screen: str, **extra: Any) -> dict[str, Any]:
+        run = request.query_params.get("run")
+        context: dict[str, Any] = {
+            "screen": screen,
+            "theme": _theme(request),
+            "run": run if isinstance(run, str) and run else None,
+        }
+        context.update(extra)
+        return context
+
     def _screen(request: Request, name: str, numeral: str, label: str) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
             "screen.html",
-            {
-                "screen": name,
-                "numeral": numeral,
-                "label": label,
-                "theme": _theme(request),
-            },
+            _page(request, name, numeral=numeral, label=label),
         )
 
     def _session_or_404(run_id: str) -> RunSession:
@@ -155,7 +166,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "setup.html",
-            {"screen": "setup", "theme": _theme(request)},
+            _page(request, "setup"),
         )
 
     @app.get("/pipeline", response_class=HTMLResponse, name="pipeline")
@@ -163,7 +174,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "pipeline.html",
-            {"screen": "pipeline", "theme": _theme(request)},
+            _page(request, "pipeline"),
         )
 
     @app.get("/council", response_class=HTMLResponse, name="council")
@@ -171,7 +182,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "council.html",
-            {"screen": "council", "theme": _theme(request)},
+            _page(request, "council"),
         )
 
     @app.get("/guideline", response_class=HTMLResponse, name="guideline")
@@ -179,7 +190,7 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "guideline.html",
-            {"screen": "guideline", "theme": _theme(request)},
+            _page(request, "guideline"),
         )
 
     @app.get("/forge", response_class=HTMLResponse, name="forge")
@@ -208,6 +219,20 @@ def create_app(
             return probe_run(config, credentials, opener=store.opener)
         except ConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/setup/models")
+    async def setup_models(body: SetupModelsBody) -> dict[str, Any]:
+        if store.dotenv is not None:
+            load_dotenv(store.dotenv)
+        try:
+            models = list_models(
+                body.provider,
+                secrets=body.secrets or None,
+                opener=store.opener,
+            )
+        except ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"provider": body.provider, "models": models}
 
     @app.post("/api/setup/toml")
     async def setup_toml(body: SetupTomlBody) -> PlainTextResponse:
