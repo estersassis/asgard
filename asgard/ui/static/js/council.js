@@ -161,11 +161,16 @@
         render();
       })
       .catch(function (err) {
-        var pr = state.selected ? state.prs[state.selected] : null;
-        if (pr && pr.status === "error") {
-          pr.error = err.message || String(err);
-        }
-        render();
+        var message = err.message || String(err);
+        return loadItems()
+          .catch(function () {
+            /* ignore */
+          })
+          .then(function () {
+            var pr = state.selected ? state.prs[state.selected] : null;
+            if (pr) pr.error = message;
+            render();
+          });
       })
       .then(function () {
         state.retrying = false;
@@ -523,6 +528,7 @@
       if (!result.ok) return;
       var rows = parseJsonl(result.text);
       var payloads = [];
+      var seen = {};
       rows.forEach(function (row) {
         if (!row || typeof row !== "object") return;
         var payload = row.payload;
@@ -537,9 +543,19 @@
         var pr = ensurePr(prId);
         applyTerminal(pr, payload);
         payloads.push(payload);
+        seen[prId] = true;
+      });
+      // Dropped error checkpoints (retry) must not stay painted as error from the log.
+      state.order.forEach(function (prId) {
+        var pr = state.prs[prId];
+        if (!pr || seen[prId]) return;
+        if (pr.status !== "error") return;
+        resetPrForRetry(prId);
       });
       if (payloads.length && !state.classifyDone) {
         recountTotalsFromPayloads(payloads);
+      } else {
+        recountTotalsFromPrs();
       }
     });
   }
@@ -1161,12 +1177,13 @@
           /* display ids stay as stored pr_id */
         })
         .then(function () {
+          if (log.ok) hydrateFromLog(log.text);
+        })
+        .then(function () {
+          // items.jsonl is the source of truth over historical log events.
           return loadItems().catch(function () {
             /* no items yet */
           });
-        })
-        .then(function () {
-          if (log.ok) hydrateFromLog(log.text);
         })
         .then(function () {
           return loadFinishedArtifacts().catch(function () {

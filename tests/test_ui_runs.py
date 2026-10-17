@@ -165,4 +165,4 @@ def test_retry_classify_drops_errors_and_resumes(
         json={"pr_ids": ["1"]},
     )
     assert missing.status_code == 400
-    assert "no error" in missing.json()["detail"]
+    assert "error checkpoints" in missing.json()["detail"]

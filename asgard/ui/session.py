@@ -150,7 +150,13 @@ class RunSession:
         if all_errors:
             targets = errors
         else:
-            targets = {item_id for item_id in (pr_ids or []) if item_id} & errors
+            requested = {item_id for item_id in (pr_ids or []) if item_id}
+            targets = requested & errors
+            if requested and not targets:
+                raise ValueError(
+                    "none of the selected PRs are error checkpoints"
+                    + (f" ({len(errors)} errors still on disk)" if errors else "")
+                )
         if not targets:
             raise ValueError("no error pull requests to retry")
         removed = drop_classify_items(self.output_dir, targets)

@@ -1,6 +1,12 @@
 """Pilot-set validation against classifier prompts."""
 
-from asgard.core.pilot.gate import GateResult, GateThresholds, evaluate_gates
+from asgard.core.pilot.gate import (
+    GateResult,
+    GateThresholds,
+    PromoteError,
+    evaluate_gates,
+    promote,
+)
 from asgard.core.pilot.runner import PilotPrediction, PilotResult, run_pilot
 from asgard.core.pilot.set import PilotItem, PilotSet, load_pilot_set
 from asgard.core.pilot.statistics import (
@@ -21,9 +27,11 @@ __all__ = [
     "PilotResult",
     "PilotSet",
     "PilotStatistics",
+    "PromoteError",
     "compute_metrics",
     "confusion_matrix",
     "evaluate_gates",
     "load_pilot_set",
+    "promote",
     "run_pilot",
 ]
