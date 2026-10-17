@@ -18,6 +18,8 @@ from fastapi.testclient import TestClient
 from asgard.core.config import load_run
 from asgard.core.events import ClassificationAttempt, Error
 from asgard.core.orchestrator import Orchestrator
+from asgard.core.pilot.set import load_pilot_set
+from asgard.core.prompt_registry import PromptRegistry, content_sha256, resolve_system_prompt
 from asgard.core.stage import CancelledError, RunContext, Stage
 from asgard.prompts.synthesizer import SYSTEM_PROMPT
 from asgard.providers.handlers.fake import FakeHandler
@@ -498,6 +500,273 @@ def test_guideline_page_assets() -> None:
     assert "/regenerate" in js.text
     assert "/bundle.zip" in js.text
     assert "unknown_citations" in js.text
+
+
+def test_forge_page_assets() -> None:
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+
+    page = client.get("/forge")
+    assert page.status_code == 200
+    assert "ASGARD" in page.text
+    assert "V</span>Forge" in page.text
+    assert "The <em>forge</em>" in page.text
+    assert "/static/css/forge.css" in page.text
+    assert "/static/js/forge.js" in page.text
+    assert 'id="forge"' in page.text
+    assert 'id="forge-tabs"' in page.text
+    assert 'id="forge-tab-classifier"' in page.text
+    assert 'id="forge-version"' in page.text
+    assert 'id="forge-save"' in page.text
+    assert 'id="forge-prompt"' in page.text
+    assert 'id="forge-pilot-set"' in page.text
+    assert 'id="forge-run"' in page.text
+    assert 'id="forge-promote"' in page.text
+    assert 'id="forge-reject"' in page.text
+    assert 'id="forge-config"' in page.text
+    assert 'disabled' in page.text
+    assert 'data-theme="light"' not in page.text
+    assert not _TOKEN_HEX.search(page.text)
+
+    light = client.get("/forge?theme=light")
+    assert light.status_code == 200
+    assert 'data-theme="light"' in light.text
+
+    css = client.get("/static/css/forge.css")
+    assert css.status_code == 200
+    assert "760px" in css.text
+    assert ".tab.on" in css.text
+    assert "var(--ember)" in css.text
+    assert ".btn:disabled" in css.text
+
+    js = client.get("/static/js/forge.js")
+    assert js.status_code == 200
+    assert "/api/prompts" in js.text
+    assert "/api/pilot/sets" in js.text
+    assert "/api/pilot/runs" in js.text
+    assert "/api/pilot/promote" in js.text
+    assert "can_promote" in js.text
+
+
+def _forge_pilot_metrics(*, f1: float, kappa: float, candidate: str) -> dict[str, Any]:
+    return {
+        "candidate_prompt": candidate,
+        "candidate": {
+            "accuracy": max(f1, 0.5),
+            "precision": f1,
+            "recall": f1,
+            "f1": f1,
+            "kappa": kappa,
+            "confusion": {"tp": 10, "fp": 0, "fn": 0, "tn": 5},
+        },
+        "gates": {
+            "passed": f1 >= 0.90 and kappa >= 0.80,
+            "can_promote": f1 >= 0.90 and kappa >= 0.80,
+            "failures": (
+                (["f1"] if f1 < 0.90 else [])
+                + (["kappa"] if kappa < 0.80 else [])
+            ),
+            "thresholds": {"f1_min": 0.90, "kappa_min": 0.80},
+        },
+    }
+
+
+def _forge_config(
+    tmp_path: Path,
+    *,
+    classifier: str = "default",
+    registry_dir: Path | None = None,
+) -> Path:
+    prompts = [
+        "[prompts]",
+        f'classifier = "{classifier}"',
+    ]
+    if registry_dir is not None:
+        prompts.append(f'registry_dir = "{registry_dir}"')
+    path = tmp_path / "asgard.toml"
+    path.write_text(
+        "\n".join(
+            [
+                'repo = "owner/name"',
+                f'output_dir = "{tmp_path / "out"}"',
+                "",
+                *prompts,
+                "",
+                "[llm.default]",
+                'provider = "fake"',
+                'model = "fake"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_forge_prompts_api(tmp_path: Path) -> None:
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+    registry = tmp_path / "prompts"
+    role_q = f"role=classifier&registry_dir={registry}"
+
+    listed = client.get(f"/api/prompts?{role_q}")
+    assert listed.status_code == 200
+    versions = listed.json()
+    assert versions[0]["id"] == "default"
+    assert "sha256" in versions[0]
+    assert "body" not in versions[0]
+
+    default = client.get(f"/api/prompts/classifier/default?registry_dir={registry}")
+    assert default.status_code == 200
+    assert default.json()["id"] == "default"
+    assert default.json()["body"]
+    assert default.json()["sha256"] == content_sha256(default.json()["body"])
+
+    saved = client.post(
+        "/api/prompts/classifier",
+        json={
+            "name": "Forge Strict",
+            "body": "classifier body for forge ui test\n",
+            "notes": "from forge test",
+            "registry_dir": str(registry),
+        },
+    )
+    assert saved.status_code == 200
+    payload = saved.json()
+    assert payload["id"] == "forge-strict"
+    assert payload["body"] == "classifier body for forge ui test\n"
+    assert payload["notes"] == "from forge test"
+    assert payload["sha256"] == content_sha256(payload["body"])
+
+    again = client.get(f"/api/prompts?{role_q}")
+    ids = [item["id"] for item in again.json()]
+    assert ids[0] == "default"
+    assert "forge-strict" in ids
+
+    got = client.get(f"/api/prompts/classifier/forge-strict?registry_dir={registry}")
+    assert got.status_code == 200
+    assert got.json() == payload
+
+    active = client.get("/api/prompts/active")
+    assert active.status_code == 200
+    assert active.json() == {
+        "classifier": "default",
+        "evaluator": "default",
+        "synthesizer": "default",
+    }
+
+    config = _forge_config(tmp_path, classifier="forge-strict", registry_dir=registry)
+    from_toml = client.get(f"/api/prompts/active?config={config}")
+    assert from_toml.status_code == 200
+    assert from_toml.json()["classifier"] == "forge-strict"
+
+
+def test_forge_pilot_sets_and_promote(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+
+    sets = client.get("/api/pilot/sets")
+    assert sets.status_code == 200
+    bundled = sets.json()
+    assert any(item["id"] == "example" and item["bundled"] is True for item in bundled)
+
+    example = load_pilot_set("example")
+    upload_body = {
+        "id": "ui-upload",
+        "name": "UI Upload",
+        "items": [example.items[0].model_dump(mode="json")],
+    }
+    uploaded = client.post("/api/pilot/sets", json=upload_body)
+    assert uploaded.status_code == 200
+    assert uploaded.json()["id"] == "ui-upload"
+    upload_path = Path(uploaded.json()["path"])
+    assert upload_path.is_file()
+    assert upload_path.parent.name == "uploads"
+
+    listed = client.get("/api/pilot/sets").json()
+    assert any(item["id"] == "ui-upload" and item["bundled"] is False for item in listed)
+
+    registry = PromptRegistry(tmp_path / "prompts")
+    active = registry.save(
+        "classifier",
+        name="forge-active",
+        body="active classifier prompt body\n",
+    )
+    candidate = registry.save(
+        "classifier",
+        name="forge-candidate",
+        body="candidate classifier prompt body\n",
+    )
+    assert content_sha256(active.body) != content_sha256(candidate.body)
+
+    config = _forge_config(
+        tmp_path,
+        classifier=active.id,
+        registry_dir=registry.root,
+    )
+    before = config.read_text(encoding="utf-8")
+    previous_hash = content_sha256(
+        resolve_system_prompt(
+            "classifier",
+            {"prompts": {"classifier": active.id, "registry_dir": str(registry.root)}},
+            tmp_path / "run",
+        )
+    )
+
+    failing = tmp_path / "fail-metrics.json"
+    failing.write_text(
+        json.dumps(_forge_pilot_metrics(f1=0.50, kappa=0.40, candidate=candidate.id))
+        + "\n",
+        encoding="utf-8",
+    )
+    blocked = client.post(
+        "/api/pilot/promote",
+        json={
+            "candidate": candidate.id,
+            "config": str(config),
+            "from_result": str(failing),
+        },
+    )
+    assert blocked.status_code == 400
+    assert "cannot promote" in blocked.json()["detail"]
+    assert config.read_text(encoding="utf-8") == before
+    assert f'classifier = "{active.id}"' in before
+
+    passing = tmp_path / "ok-metrics.json"
+    passing.write_text(
+        json.dumps(_forge_pilot_metrics(f1=0.95, kappa=0.85, candidate=candidate.id))
+        + "\n",
+        encoding="utf-8",
+    )
+    promoted = client.post(
+        "/api/pilot/promote",
+        json={
+            "candidate": candidate.id,
+            "config": str(config),
+            "from_result": str(passing),
+        },
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["can_promote"] is True
+
+    text = config.read_text(encoding="utf-8")
+    assert f'classifier = "{candidate.id}"' in text
+    assert f'classifier = "{active.id}"' not in text
+
+    new_hash = content_sha256(
+        resolve_system_prompt(
+            "classifier",
+            {"prompts": {"classifier": candidate.id, "registry_dir": str(registry.root)}},
+            tmp_path / "run",
+        )
+    )
+    assert new_hash == content_sha256(candidate.body)
+    assert new_hash != previous_hash
+    assert previous_hash == content_sha256(active.body)
 
 
 def test_pipeline_log_config_and_removed_endpoints(
