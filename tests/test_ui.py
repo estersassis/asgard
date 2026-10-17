@@ -316,6 +316,7 @@ def test_shell_and_themes() -> None:
     setup_js = client.get("/static/js/setup.js")
     assert setup_js.status_code == 200
     assert "/api/setup/validate" in setup_js.text
+    assert "/api/setup/models" in setup_js.text
     assert "/api/runs" in setup_js.text
     assert "/pipeline?run=" in setup_js.text
 
@@ -354,6 +355,23 @@ def test_pipeline_page_assets() -> None:
     assert "/events" in js.text
     assert "/log" in js.text
     assert "/council?run=" in js.text
+    assert "startedAt" in js.text
+    assert "formatElapsed" in js.text
+
+
+def test_nav_preserves_run_query() -> None:
+    app = create_app(dotenv=None)
+    client = TestClient(app)
+    run_id = "6168dcdaf88e4bfb99a1e6b5d35f3cc5"
+    page = client.get(f"/pipeline?run={run_id}")
+    assert page.status_code == 200
+    for path in ("/setup", "/pipeline", "/council", "/guideline", "/forge"):
+        assert f"{path}?run={run_id}" in page.text
+
+    bare = client.get("/pipeline")
+    assert bare.status_code == 200
+    assert "/council" in bare.text
+    assert "/council?run=" not in bare.text
 
 
 def test_council_page_assets() -> None:
@@ -990,6 +1008,56 @@ def test_setup_toml_and_parse_roundtrip(tmp_path: Path, monkeypatch: pytest.Monk
     assert config.prefilter is True
     assert config.filters.state == "closed"
     assert config.llm.evaluator.provider == "openai"
+
+
+def test_setup_models_lists_available_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> Any:
+        url = request.full_url
+        path = url.split("?", 1)[0].rstrip("/")
+        if path.endswith("/v1/models"):
+            return _Response(
+                json.dumps(
+                    {
+                        "data": [
+                            {"id": "gpt-4.1-mini"},
+                            {"id": "text-embedding-3-small"},
+                        ]
+                    }
+                ).encode()
+            )
+        if "/api/tags" in url:
+            return _Response(
+                json.dumps({"models": [{"name": "llama3.1:latest"}]}).encode()
+            )
+        raise AssertionError(f"unexpected URL: {url}")
+
+    app = create_app(opener=opener, dotenv=None)
+    client = TestClient(app)
+
+    openai = client.post(
+        "/api/setup/models",
+        json={"provider": "openai", "secrets": {"OPENAI_API_KEY": KEY}},
+    )
+    assert openai.status_code == 200, openai.text
+    assert openai.json() == {
+        "provider": "openai",
+        "models": ["gpt-4.1-mini"],
+    }
+
+    ollama = client.post("/api/setup/models", json={"provider": "ollama"})
+    assert ollama.status_code == 200, ollama.text
+    assert ollama.json()["models"] == ["llama3.1:latest"]
+
+    missing = client.post("/api/setup/models", json={"provider": "openai"})
+    assert missing.status_code == 400
+
+    setup = client.get("/setup")
+    assert setup.status_code == 200
+    assert 'name="model" id="model"' in setup.text or 'id="model"' in setup.text
+    assert "<select" in setup.text
+    assert "role-model" in setup.text
 
 
 def test_setup_validate_probes_resolved_providers_only(

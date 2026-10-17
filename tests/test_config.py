@@ -13,6 +13,7 @@ from asgard.cli.main import main
 from asgard.core.config import (
     ConfigError,
     dump_toml,
+    list_models,
     load_dotenv,
     load_run,
     prepare_run,
@@ -670,6 +671,73 @@ def test_probe_run_collects_github_and_provider_results(
     assert KEY not in results["openai"]["message"]
     assert results["ollama"]["ok"] is True
     assert results["ollama"]["message"] == ""
+
+
+def test_list_models_for_each_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", KEY)
+    monkeypatch.setenv("GEMINI_API_KEY", KEY)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
+    monkeypatch.setenv("OLLAMA_HOST", "http://localhost:11434")
+
+    def opener(request: urllib.request.Request, timeout: int = 10) -> _Response:
+        url = request.full_url
+        if "/api/tags" in url:
+            return _Response(body=_OLLAMA_TAGS)
+        if "api.openai.com" in url:
+            return _Response(
+                body=json.dumps(
+                    {
+                        "data": [
+                            {"id": "gpt-4o-mini"},
+                            {"id": "text-embedding-3-small"},
+                            {"id": "whisper-1"},
+                        ]
+                    }
+                ).encode()
+            )
+        if "generativelanguage.googleapis.com" in url:
+            return _Response(
+                body=json.dumps(
+                    {
+                        "models": [
+                            {
+                                "name": "models/gemini-2.5-flash",
+                                "supportedGenerationMethods": ["generateContent"],
+                            },
+                            {
+                                "name": "models/embedding-001",
+                                "supportedGenerationMethods": ["embedContent"],
+                            },
+                        ]
+                    }
+                ).encode()
+            )
+        if "api.anthropic.com" in url:
+            return _Response(
+                body=json.dumps(
+                    {
+                        "data": [
+                            {"id": "claude-sonnet-5-5"},
+                            {"id": "claude-haiku-5-5"},
+                        ],
+                        "has_more": False,
+                    }
+                ).encode()
+            )
+        raise AssertionError(f"unexpected URL: {url}")
+
+    assert list_models("ollama", opener=opener) == [
+        "llama-eval:latest",
+        "llama3.1:latest",
+    ]
+    assert list_models("openai", opener=opener) == ["gpt-4o-mini"]
+    assert list_models("gemini", opener=opener) == ["gemini-2.5-flash"]
+    assert list_models("anthropic", opener=opener) == [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+    ]
+    with pytest.raises(ConfigError, match="unknown provider"):
+        list_models("fake", opener=opener)
 
 
 def test_ollama_requires_pulled_model(
