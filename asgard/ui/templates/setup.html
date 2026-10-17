@@ -49,7 +49,9 @@
       </label>
       <label class="f">
         <span class="lbl">Model</span>
-        <input class="inp" name="model" id="model" type="text" value="llama3.1">
+        <select class="inp" name="model" id="model">
+          <option value="llama3.1">llama3.1</option>
+        </select>
       </label>
     </div>
 
@@ -113,7 +115,9 @@
             </label>
             <label class="f">
               <span class="lbl">Model</span>
-              <input class="inp role-model" data-role="classifier" type="text" placeholder="default">
+              <select class="inp role-model" data-role="classifier">
+                <option value="">default</option>
+              </select>
             </label>
           </div>
           <div class="setup-role" data-role="evaluator">
@@ -130,7 +134,9 @@
             </label>
             <label class="f">
               <span class="lbl">Model</span>
-              <input class="inp role-model" data-role="evaluator" type="text" placeholder="default">
+              <select class="inp role-model" data-role="evaluator">
+                <option value="">default</option>
+              </select>
             </label>
           </div>
           <div class="setup-role" data-role="synthesizer">
@@ -147,7 +153,9 @@
             </label>
             <label class="f">
               <span class="lbl">Model</span>
-              <input class="inp role-model" data-role="synthesizer" type="text" placeholder="default">
+              <select class="inp role-model" data-role="synthesizer">
+                <option value="">default</option>
+              </select>
             </label>
           </div>
         </div>

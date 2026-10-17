@@ -115,7 +115,7 @@ class Component extends DCLogic {
       { n: 'I', name: 'Mine', d: '200 PRs', st: 'done', note: 'Waited 41 s for the GitHub rate limit', nc: 'var(--bifrost)' },
       { n: 'II', name: 'Normalize', d: '200', st: 'done' },
       { n: 'III', name: 'Pre-filter', d: '58 kept · 142 dropped', st: 'done' },
-      { n: 'IV', name: 'Classify', d: s.stopped ? 'stopped · 48 / 58' : '48 / 58', st: s.stopped ? 'stopped' : 'running' },
+      { n: 'IV', name: 'Classify', d: s.stopped ? 'stopped · 48 / 58 · 0:06:12' : '48 / 58 · 0:06:12', st: s.stopped ? 'stopped' : 'running' },
       { n: 'V', name: 'Consolidate', d: '', st: 'pending' },
       { n: 'VI', name: 'Synthesize', d: '', st: 'pending' },
       { n: 'VII', name: 'SECURITY.md', d: '', st: 'pending' },
@@ -123,7 +123,7 @@ class Component extends DCLogic {
     ];
     return {
       theme: this.props.theme ?? 'dark',
-      headLabel: s.stopped ? 'Stopped · finished PRs are saved' : 'Running · 06:12',
+      headLabel: s.stopped ? 'Stopped · finished PRs are saved' : 'Running · 0:06:12',
       headColor: s.stopped ? 'var(--no)' : 'var(--ink-soft)',
       stages: raw.map(function (r) {
         var st = r.st;

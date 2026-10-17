@@ -70,6 +70,8 @@
       progressTotal: null,
       note: "",
       removed: null,
+      startedAt: null,
+      endedAt: null,
     };
   }
 
@@ -160,6 +162,8 @@
         stage.progressTotal = null;
         stage.note = "";
         stage.removed = null;
+        stage.startedAt = event.at || stage.startedAt || null;
+        stage.endedAt = null;
         state.stopped = false;
         state.completed = false;
         break;
@@ -167,6 +171,8 @@
         stage = state.stages[event.stage];
         if (!stage) break;
         stage.state = event.skipped ? "skipped" : "done";
+        if (event.at) stage.endedAt = event.at;
+        if (!stage.startedAt && event.at) stage.startedAt = event.at;
         if (event.stage === "prefilter" && !event.skipped && !state.prefilterOff) {
           fetchRemoved();
         }
@@ -232,14 +238,36 @@
     });
   }
 
-  function formatElapsed(fromIso) {
-    if (!fromIso) return "00:00";
+  function formatElapsed(fromIso, toIso) {
+    if (!fromIso) return "0:00:00";
     var start = Date.parse(fromIso);
-    if (!Number.isFinite(start)) return "00:00";
-    var seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
-    var mm = Math.floor(seconds / 60);
+    if (!Number.isFinite(start)) return "0:00:00";
+    var end = toIso ? Date.parse(toIso) : Date.now();
+    if (!Number.isFinite(end)) end = Date.now();
+    var seconds = Math.max(0, Math.floor((end - start) / 1000));
+    var hh = Math.floor(seconds / 3600);
+    var mm = Math.floor((seconds % 3600) / 60);
     var ss = seconds % 60;
-    return String(mm).padStart(2, "0") + ":" + String(ss).padStart(2, "0");
+    return (
+      hh +
+      ":" +
+      String(mm).padStart(2, "0") +
+      ":" +
+      String(ss).padStart(2, "0")
+    );
+  }
+
+  function stageElapsed(stage) {
+    if (!stage || !stage.startedAt) return "";
+    if (stage.state === "skipped") return "";
+    return formatElapsed(stage.startedAt, stage.endedAt || null);
+  }
+
+  function withElapsed(text, stage) {
+    var elapsed = stageElapsed(stage);
+    if (!elapsed) return text;
+    if (!text) return elapsed;
+    return text + " · " + elapsed;
   }
 
   function clock(at) {
@@ -286,19 +314,19 @@
     var stoppedMid = !state.running && (stage.state === "running" || stage.state === "stopped");
 
     if (id === "mine") {
-      if (stage.state === "done") return "✓ " + stage.count + " PRs";
+      if (stage.state === "done") return withElapsed("✓ " + stage.count + " PRs", stage);
       if (stage.state === "skipped") return "skipped";
-      if (stage.count > 0) return String(stage.count);
-      return "";
+      if (stage.count > 0) return withElapsed(String(stage.count), stage);
+      return withElapsed("", stage);
     }
 
     if (id === "normalize") {
       if (stage.state === "done") {
-        if (stage.total != null) return "✓ " + stage.total;
-        return "✓";
+        if (stage.total != null) return withElapsed("✓ " + stage.total, stage);
+        return withElapsed("✓", stage);
       }
       if (stage.state === "skipped") return "skipped";
-      return "";
+      return withElapsed("", stage);
     }
 
     if (id === "prefilter") {
@@ -308,37 +336,37 @@
         var after = stage.removed.after;
         var dropped = before - after;
         var text = after + " kept · " + dropped + " dropped";
-        if (stage.state === "done") return "✓ " + text;
-        return text;
+        if (stage.state === "done") return withElapsed("✓ " + text, stage);
+        return withElapsed(text, stage);
       }
       if (stage.state === "done" || stage.state === "running" || stage.state === "stopped") {
         if (stage.total != null) {
           var kept = Math.max(0, stage.total - stage.dropped);
           var live = kept + " kept · " + stage.dropped + " dropped";
-          return stage.state === "done" ? "✓ " + live : live;
+          return withElapsed(stage.state === "done" ? "✓ " + live : live, stage);
         }
-        if (stage.dropped > 0) return stage.dropped + " dropped";
+        if (stage.dropped > 0) return withElapsed(stage.dropped + " dropped", stage);
       }
       if (stage.state === "skipped") return "skipped";
-      return "";
+      return withElapsed("", stage);
     }
 
     if (id === "classify") {
       if (stage.index != null && stage.progressTotal != null) {
         var progress = stage.index + " / " + stage.progressTotal;
-        if (stoppedMid) return "stopped · " + progress;
-        if (stage.state === "done") return "✓ " + progress;
-        return progress;
+        if (stoppedMid) return withElapsed("stopped · " + progress, stage);
+        if (stage.state === "done") return withElapsed("✓ " + progress, stage);
+        return withElapsed(progress, stage);
       }
-      if (stage.state === "done") return "✓";
+      if (stage.state === "done") return withElapsed("✓", stage);
       if (stage.state === "skipped") return "skipped";
-      if (stoppedMid) return "stopped";
-      return "";
+      if (stoppedMid) return withElapsed("stopped", stage);
+      return withElapsed("", stage);
     }
 
-    if (stage.state === "done") return "✓";
+    if (stage.state === "done") return withElapsed("✓", stage);
     if (stage.state === "skipped") return "skipped";
-    return "";
+    return withElapsed("", stage);
   }
 
   function stageUiState(id) {
@@ -716,7 +744,10 @@
   function startTimer() {
     if (state.timer) clearInterval(state.timer);
     state.timer = setInterval(function () {
-      if (state.running) renderStatus();
+      if (state.running) {
+        renderStatus();
+        renderStages();
+      }
     }, 1000);
   }
 

@@ -5,7 +5,7 @@
     ollama: "llama3.1",
     gemini: "gemini-2.5-flash",
     openai: "gpt-4.1-mini",
-    anthropic: "claude-sonnet-4-5",
+    anthropic: "claude-sonnet-5-5",
   };
   var KEY = {
     gemini: { label: "Gemini API key", env: "GEMINI_API_KEY" },
@@ -45,7 +45,10 @@
   var envPrefill = {};
   var credValues = {};
   var validateTimer = null;
+  var modelsTimer = null;
   var lastModels = Object.assign({}, MODEL);
+  var modelLists = {};
+  var modelsRequest = 0;
 
   function roleProvider(role) {
     var select = form.querySelector('.role-provider[data-role="' + role + '"]');
@@ -53,8 +56,95 @@
   }
 
   function roleModel(role) {
-    var input = form.querySelector('.role-model[data-role="' + role + '"]');
-    return input ? input.value.trim() : "";
+    var select = form.querySelector('.role-model[data-role="' + role + '"]');
+    return select ? select.value.trim() : "";
+  }
+
+  function fillSelect(select, models, current, allowEmpty) {
+    if (!select) return;
+    var value = current || "";
+    var options = models.slice();
+    if (value && options.indexOf(value) < 0) options.unshift(value);
+    select.innerHTML = "";
+    if (allowEmpty) {
+      var empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "default";
+      select.appendChild(empty);
+    }
+    var seen = {};
+    options.forEach(function (id) {
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      var option = document.createElement("option");
+      option.value = id;
+      option.textContent = id;
+      select.appendChild(option);
+    });
+    if (allowEmpty && !value) select.value = "";
+    else if (value) select.value = value;
+    else if (options.length) select.value = options[0];
+  }
+
+  function modelsFor(provider) {
+    var listed = modelLists[provider];
+    if (listed && listed.length) return listed.slice();
+    var fallback = lastModels[provider] || MODEL[provider];
+    return fallback ? [fallback] : [];
+  }
+
+  function applyModelLists() {
+    fillSelect(
+      els.model,
+      modelsFor(els.provider.value),
+      els.model.value.trim() || lastModels[els.provider.value] || MODEL[els.provider.value],
+      false
+    );
+    lastModels[els.provider.value] = els.model.value.trim();
+    ROLES.forEach(function (role) {
+      var provider = roleProvider(role);
+      var select = form.querySelector('.role-model[data-role="' + role + '"]');
+      if (!select) return;
+      if (provider === "default") {
+        fillSelect(select, [], select.value.trim(), true);
+        return;
+      }
+      fillSelect(select, modelsFor(provider), select.value.trim(), true);
+    });
+  }
+
+  function scheduleModels() {
+    if (modelsTimer) clearTimeout(modelsTimer);
+    modelsTimer = setTimeout(fetchModels, 300);
+  }
+
+  function fetchModels() {
+    var providers = usedProviders();
+    var secrets = collectSecrets();
+    var requestId = ++modelsRequest;
+    providers.forEach(function (provider) {
+      fetch("/api/setup/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: provider, secrets: secrets }),
+      })
+        .then(function (response) {
+          return response.json().then(function (body) {
+            return { ok: response.ok, body: body };
+          });
+        })
+        .then(function (result) {
+          if (requestId !== modelsRequest) return;
+          if (result.ok && result.body && Array.isArray(result.body.models)) {
+            modelLists[provider] = result.body.models;
+          }
+          applyModelLists();
+        })
+        .catch(function () {
+          if (requestId !== modelsRequest) return;
+          applyModelLists();
+        });
+    });
   }
 
   function usedProviders() {
@@ -131,7 +221,10 @@
           "";
       }
 
-      input.addEventListener("input", scheduleValidate);
+      input.addEventListener("input", function () {
+        scheduleValidate();
+        scheduleModels();
+      });
       label.appendChild(caption);
       label.appendChild(input);
       label.appendChild(hint);
@@ -223,25 +316,32 @@
       els.provider.value = def.provider;
       lastModels[def.provider] = def.model || MODEL[def.provider] || "";
     }
-    if (def.model) els.model.value = def.model;
-    else if (def.provider) els.model.value = MODEL[def.provider] || "";
+    if (def.model) {
+      lastModels[def.provider || els.provider.value] = def.model;
+      fillSelect(els.model, modelsFor(els.provider.value), def.model, false);
+    } else if (def.provider) {
+      fillSelect(els.model, modelsFor(def.provider), MODEL[def.provider] || "", false);
+    }
 
     ROLES.forEach(function (role) {
       var spec = llm[role] || {};
       var providerSelect = form.querySelector(
         '.role-provider[data-role="' + role + '"]'
       );
-      var modelInput = form.querySelector('.role-model[data-role="' + role + '"]');
+      var modelSelect = form.querySelector('.role-model[data-role="' + role + '"]');
       if (providerSelect) {
         providerSelect.value = spec.provider || "default";
       }
-      if (modelInput) {
-        modelInput.value = spec.model || "";
+      if (modelSelect) {
+        var provider = providerSelect ? providerSelect.value : "default";
+        if (provider === "default") fillSelect(modelSelect, [], spec.model || "", true);
+        else fillSelect(modelSelect, modelsFor(provider), spec.model || "", true);
       }
     });
 
     renderCredentials();
     scheduleValidate();
+    scheduleModels();
   }
 
   function applyProbe(results) {
@@ -346,27 +446,38 @@
     PROVIDERS.forEach(function (p) {
       if (current === MODEL[p] || current === lastModels[p]) prevDefault = true;
     });
+    var nextValue = current;
     if (!current || prevDefault) {
-      els.model.value = lastModels[next] || MODEL[next] || "";
+      nextValue = lastModels[next] || MODEL[next] || "";
     }
+    fillSelect(els.model, modelsFor(next), nextValue, false);
     lastModels[next] = els.model.value.trim();
     renderCredentials();
     scheduleValidate();
+    scheduleModels();
   });
 
-  els.model.addEventListener("input", function () {
+  els.model.addEventListener("change", function () {
     lastModels[els.provider.value] = els.model.value.trim();
     scheduleValidate();
   });
 
   form.querySelectorAll(".role-provider").forEach(function (select) {
     select.addEventListener("change", function () {
+      var role = select.getAttribute("data-role");
+      var modelSelect = form.querySelector('.role-model[data-role="' + role + '"]');
+      var provider = select.value;
+      if (modelSelect) {
+        if (provider === "default") fillSelect(modelSelect, [], "", true);
+        else fillSelect(modelSelect, modelsFor(provider), "", true);
+      }
       renderCredentials();
       scheduleValidate();
+      scheduleModels();
     });
   });
-  form.querySelectorAll(".role-model").forEach(function (input) {
-    input.addEventListener("input", scheduleValidate);
+  form.querySelectorAll(".role-model").forEach(function (select) {
+    select.addEventListener("change", scheduleValidate);
   });
 
   ["repo", "token", "maxPrs", "state", "since", "until", "maxIterations", "batchSize", "prefilter"].forEach(
@@ -464,6 +575,8 @@
       });
   });
 
+  applyModelLists();
+
   fetch("/api/setup/env")
     .then(function (response) {
       return response.ok ? response.json() : {};
@@ -481,9 +594,11 @@
           : "Never saved to config",
         null
       );
+      scheduleModels();
       if (els.repo.value.trim()) scheduleValidate();
     })
     .catch(function () {
       renderCredentials();
+      scheduleModels();
     });
 })();

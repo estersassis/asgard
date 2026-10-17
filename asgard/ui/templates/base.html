@@ -11,7 +11,8 @@
 <body>
   <div class="ag"{% if theme == 'light' %} data-theme="light"{% endif %}>
     <header class="site-header">
-      <a class="brand" href="{{ url_for('setup') }}">
+      {% set run_qs = ('?run=' ~ (run|urlencode)) if run else '' %}
+      <a class="brand" href="{{ url_for('setup') }}{{ run_qs }}">
         <svg width="26" height="24" viewBox="0 0 100 92" aria-hidden="true">
           <rect x="15" y="40" width="13" height="49" rx="1" fill="var(--ember)"></rect>
           <rect x="72" y="40" width="13" height="49" rx="1" fill="var(--ember)"></rect>
@@ -22,11 +23,11 @@
         <span class="serif brand-mark">ASGARD</span>
       </a>
       <nav class="screens" aria-label="Screens">
-        <a class="nav{% if screen == 'setup' %} on{% endif %}" href="{{ url_for('setup') }}"{% if screen == 'setup' %} aria-current="page"{% endif %}><span class="n">I</span>Setup</a>
-        <a class="nav{% if screen == 'pipeline' %} on{% endif %}" href="{{ url_for('pipeline') }}"{% if screen == 'pipeline' %} aria-current="page"{% endif %}><span class="n">II</span>Pipeline</a>
-        <a class="nav{% if screen == 'council' %} on{% endif %}" href="{{ url_for('council') }}"{% if screen == 'council' %} aria-current="page"{% endif %}><span class="n">III</span>Council</a>
-        <a class="nav{% if screen == 'guideline' %} on{% endif %}" href="{{ url_for('guideline') }}"{% if screen == 'guideline' %} aria-current="page"{% endif %}><span class="n">IV</span>Guideline</a>
-        <a class="nav{% if screen == 'forge' %} on{% endif %}" href="{{ url_for('forge') }}"{% if screen == 'forge' %} aria-current="page"{% endif %}><span class="n">V</span>Forge</a>
+        <a class="nav{% if screen == 'setup' %} on{% endif %}" href="{{ url_for('setup') }}{{ run_qs }}"{% if screen == 'setup' %} aria-current="page"{% endif %}><span class="n">I</span>Setup</a>
+        <a class="nav{% if screen == 'pipeline' %} on{% endif %}" href="{{ url_for('pipeline') }}{{ run_qs }}"{% if screen == 'pipeline' %} aria-current="page"{% endif %}><span class="n">II</span>Pipeline</a>
+        <a class="nav{% if screen == 'council' %} on{% endif %}" href="{{ url_for('council') }}{{ run_qs }}"{% if screen == 'council' %} aria-current="page"{% endif %}><span class="n">III</span>Council</a>
+        <a class="nav{% if screen == 'guideline' %} on{% endif %}" href="{{ url_for('guideline') }}{{ run_qs }}"{% if screen == 'guideline' %} aria-current="page"{% endif %}><span class="n">IV</span>Guideline</a>
+        <a class="nav{% if screen == 'forge' %} on{% endif %}" href="{{ url_for('forge') }}{{ run_qs }}"{% if screen == 'forge' %} aria-current="page"{% endif %}><span class="n">V</span>Forge</a>
       </nav>
     </header>
     <main class="page{% block page_class %}{% endblock %}">

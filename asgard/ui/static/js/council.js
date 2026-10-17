@@ -531,6 +531,54 @@
     return true;
   }
 
+  function findingsFromEvent(raw) {
+    if (!Array.isArray(raw) || !raw.length) return [];
+    var byName = {};
+    raw.forEach(function (finding) {
+      if (!finding || typeof finding !== "object") return;
+      if (typeof finding.criterion === "string") byName[finding.criterion] = finding;
+    });
+    return FINDING_ORDER.map(function (name) {
+      var finding = byName[name];
+      if (!finding) {
+        return { c: name, passed: false, text: "" };
+      }
+      return {
+        c: name,
+        passed: !!finding.passed,
+        text: typeof finding.explanation === "string" ? finding.explanation : "",
+      };
+    });
+  }
+
+  function upsertLiveRound(pr, patch) {
+    var iteration = pr.liveRound || pr.attempts || 1;
+    var existing = null;
+    for (var i = 0; i < pr.rounds.length; i += 1) {
+      if (pr.rounds[i].iteration === iteration) {
+        existing = pr.rounds[i];
+        break;
+      }
+    }
+    if (!existing) {
+      existing = {
+        n: roman(iteration),
+        iteration: iteration,
+        decision: null,
+        quote: "",
+        verdict: null,
+        findings: [],
+        feedback: "",
+        reviewing: true,
+      };
+      pr.rounds.push(existing);
+    }
+    Object.keys(patch).forEach(function (key) {
+      existing[key] = patch[key];
+    });
+    return existing;
+  }
+
   function onClassificationAttempt(event) {
     var prId = event.pr_id;
     if (typeof prId !== "string") return;
@@ -539,7 +587,18 @@
     pr.attempts += 1;
     pr.phase = "review";
     pr.liveRound = pr.attempts;
-    pr.rounds = [];
+    var decision = null;
+    if (typeof event.has_security_discussion === "boolean") {
+      decision = event.has_security_discussion;
+    }
+    upsertLiveRound(pr, {
+      decision: decisionLabel(decision),
+      quote: typeof event.quote === "string" ? event.quote : "",
+      verdict: null,
+      findings: [],
+      feedback: "",
+      reviewing: true,
+    });
   }
 
   function onEvaluatorVerdict(event) {
@@ -547,9 +606,16 @@
     if (typeof prId !== "string") return;
     var pr = ensurePr(prId);
     if (pr.phase === "done") return;
+    var findings = findingsFromEvent(event.findings);
+    var feedback = typeof event.feedback === "string" ? event.feedback : "";
+    upsertLiveRound(pr, {
+      verdict: event.approved === true ? "approve" : "revise",
+      findings: findings,
+      feedback: feedback,
+      reviewing: false,
+    });
     if (event.approved === true) return;
     pr.phase = "classifying";
-    pr.rounds = [];
   }
 
   function onLoopFinished(event, live) {
@@ -822,8 +888,8 @@
     if (klass) els.status.classList.add(klass);
     els.title.textContent = pr.title || pr.prId;
 
-    var waiting = pr.phase === "classifying";
-    els.waiting.hidden = !waiting;
+    var waiting = pr.phase === "classifying" && !pr.rounds.length;
+    els.waiting.hidden = !(pr.phase === "classifying");
 
     var showError = pr.status === "error" && pr.error;
     els.error.hidden = !showError;

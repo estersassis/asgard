@@ -67,7 +67,7 @@ a{color:var(--ember)}
       <label class="f"><span class="lbl">Provider</span>
         <select class="inp" value="{{prov}}" onChange="{{pickProv}}"><option value="ollama">Ollama (local, free)</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select>
       </label>
-      <label class="f"><span class="lbl">Model</span><input class="inp" value="{{model}}" onChange="{{editModel}}"></label>
+      <label class="f"><span class="lbl">Model</span><select class="inp" value="{{model}}" onChange="{{editModel}}"><option value="{{model}}">{{model}}</option></select></label>
     </div>
 
     <sc-for list="{{creds}}" as="c" hint-placeholder-count="1">
@@ -120,7 +120,7 @@ class Component extends DCLogic {
   constructor(props) { super(props); this.state = { more: false, prov: 'ollama', classifier: 'default', evaluator: 'gemini', synthesizer: 'default' }; }
   renderVals() {
     var self = this, s = this.state, m = s.more;
-    var MODEL = { ollama: 'llama3.1', gemini: 'gemini-2.5-flash', openai: 'gpt-4.1-mini', anthropic: 'claude-sonnet-4-5' };
+    var MODEL = { ollama: 'llama3.1', gemini: 'gemini-2.5-flash', openai: 'gpt-4.1-mini', anthropic: 'claude-sonnet-5-5' };
     var KEY = { gemini: ['Gemini API key', 'GEMINI_API_KEY'], openai: ['OpenAI API key', 'OPENAI_API_KEY'], anthropic: ['Anthropic API key', 'ANTHROPIC_API_KEY'] };
     var used = [s.prov];
     ['classifier', 'evaluator', 'synthesizer'].forEach(function (r) { used.push(s[r] === 'default' ? s.prov : s[r]); });
