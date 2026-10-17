@@ -255,7 +255,11 @@ def create_app(
 
     @app.get("/forge", response_class=HTMLResponse, name="forge")
     async def forge(request: Request) -> HTMLResponse:
-        return _screen(request, "forge", "V", "Forge")
+        return templates.TemplateResponse(
+            request,
+            "forge.html",
+            _page(request, "forge"),
+        )
 
     @app.get("/api/setup/env")
     async def setup_env() -> dict[str, str]:

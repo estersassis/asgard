@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}ASGARD · Forge{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', path='css/forge.css') }}">
+{% endblock %}
+{% block page_class %} forge-page{% endblock %}
+{% block content %}
+  <div class="forge" id="forge">
+    <div class="forge-hero">
+      <span class="lbl">Advanced</span>
+      <h1 class="serif forge-title">The <em>forge</em></h1>
+      <p class="forge-lead">Test a prompt against human labels before using it.</p>
+    </div>
+
+    <div class="forge-editor">
+      <div class="forge-tabs" role="tablist" aria-label="Role" id="forge-tabs">
+        <button type="button" role="tab" class="tab on" data-role="classifier" aria-selected="true" id="forge-tab-classifier">Classifier</button>
+        <button type="button" role="tab" class="tab" data-role="evaluator" aria-selected="false" id="forge-tab-evaluator">Evaluator</button>
+        <button type="button" role="tab" class="tab" data-role="synthesizer" aria-selected="false" id="forge-tab-synthesizer">Synthesizer</button>
+      </div>
+
+      <div class="forge-version-row">
+        <label class="forge-field forge-field-grow">
+          <span class="lbl">Version</span>
+          <select class="sel" id="forge-version" aria-label="Version"></select>
+        </label>
+        <button type="button" class="link" id="forge-save">Save as new version</button>
+      </div>
+      <span class="forge-meta" id="forge-meta"></span>
+
+      <textarea id="forge-prompt" aria-label="Prompt" rows="8" spellcheck="false"></textarea>
+
+      <div class="forge-pilot-row" id="forge-pilot-controls">
+        <label class="forge-field forge-field-grow">
+          <span class="lbl">Pilot set</span>
+          <select class="sel" id="forge-pilot-set" aria-label="Pilot set"></select>
+        </label>
+        <input type="file" id="forge-upload" accept="application/json,.json" hidden>
+        <button type="button" class="btn" id="forge-run">Run pilot</button>
+      </div>
+      <p class="forge-pilot-hint" id="forge-pilot-hint" hidden>
+        Run pilot and Promote apply to the Classifier role.
+      </p>
+    </div>
+
+    <section class="forge-result" aria-label="Pilot result" id="forge-result" hidden>
+      <div class="forge-metrics" id="forge-metrics-summary">
+        <div class="forge-metric">
+          <span class="lbl" id="forge-f1-label">F1 · gate ≥ 0.90</span>
+          <span class="serif forge-metric-value" id="forge-f1">
+            <span class="forge-metric-active" id="forge-f1-active">—</span>
+            →
+            <span class="forge-metric-candidate" id="forge-f1-candidate">—</span>
+          </span>
+        </div>
+        <div class="forge-metric">
+          <span class="lbl" id="forge-kappa-label">Cohen’s κ · gate ≥ 0.80</span>
+          <span class="serif forge-metric-value" id="forge-kappa">
+            <span class="forge-metric-active" id="forge-kappa-active">—</span>
+            →
+            <span class="forge-metric-candidate" id="forge-kappa-candidate">—</span>
+          </span>
+        </div>
+      </div>
+
+      <button type="button" class="link forge-details-toggle" id="forge-details-toggle" aria-expanded="false" aria-controls="forge-details">
+        + All metrics and gates
+      </button>
+
+      <div class="forge-details" id="forge-details" hidden>
+        <table class="forge-table" id="forge-metrics-table">
+          <thead>
+            <tr>
+              <th class="lbl">Security class</th>
+              <th class="lbl">Active</th>
+              <th class="lbl">Candidate</th>
+              <th class="lbl">Gate</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Accuracy</td>
+              <td id="forge-acc-active">—</td>
+              <td id="forge-acc-candidate">—</td>
+              <td><input class="th" id="forge-gate-accuracy" aria-label="Accuracy gate" value="—"></td>
+            </tr>
+            <tr>
+              <td>Precision</td>
+              <td id="forge-prec-active">—</td>
+              <td id="forge-prec-candidate">—</td>
+              <td><input class="th" id="forge-gate-precision" aria-label="Precision gate" value="—"></td>
+            </tr>
+            <tr>
+              <td>Recall</td>
+              <td id="forge-rec-active">—</td>
+              <td id="forge-rec-candidate">—</td>
+              <td><input class="th" id="forge-gate-recall" aria-label="Recall gate" value="—"></td>
+            </tr>
+            <tr>
+              <td>F1</td>
+              <td id="forge-f1-row-active">—</td>
+              <td id="forge-f1-row-candidate">—</td>
+              <td><input class="th" id="forge-gate-f1" aria-label="F1 gate" value="0.90"></td>
+            </tr>
+            <tr>
+              <td>Cohen’s κ</td>
+              <td id="forge-kappa-row-active">—</td>
+              <td id="forge-kappa-row-candidate">—</td>
+              <td><input class="th" id="forge-gate-kappa" aria-label="Kappa gate" value="0.80"></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table class="forge-table" id="forge-confusion-table">
+          <thead>
+            <tr>
+              <th class="lbl">Confusion · candidate</th>
+              <th class="lbl">pred. security</th>
+              <th class="lbl">pred. not</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>human security</td>
+              <td id="forge-cm-tp">—</td>
+              <td id="forge-cm-fn">—</td>
+            </tr>
+            <tr>
+              <td>human not</td>
+              <td id="forge-cm-fp">—</td>
+              <td id="forge-cm-tn">—</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <span class="forge-pass-line" id="forge-pass-line"></span>
+      </div>
+
+      <label class="forge-field forge-config-field">
+        <span class="lbl">Config path</span>
+        <input class="sel" type="text" id="forge-config" aria-label="Config path" placeholder="path/to/asgard.toml" spellcheck="false">
+      </label>
+
+      <div class="forge-actions">
+        <span class="forge-gate-status" id="forge-gate-status"></span>
+        <div class="forge-action-btns">
+          <button type="button" class="btn" id="forge-reject">Reject</button>
+          <button type="button" class="btn pri" id="forge-promote" disabled>Promote</button>
+        </div>
+      </div>
+    </section>
+
+    <p class="forge-status" id="forge-status" hidden></p>
+    <p class="forge-error" id="forge-error" hidden></p>
+  </div>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', path='js/forge.js') }}" defer></script>
+{% endblock %}
