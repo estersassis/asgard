@@ -47,6 +47,7 @@
     security: document.getElementById("council-security"),
     notSecurity: document.getElementById("council-not-security"),
     unresolved: document.getElementById("council-unresolved"),
+    errorTotal: document.getElementById("council-error-total"),
     loop: document.getElementById("council-loop"),
     rateI: document.getElementById("council-rate-i"),
     rateFinal: document.getElementById("council-rate-final"),
@@ -161,7 +162,8 @@
       if (decision === false) return "not security";
       return null;
     }
-    if (status === "error" || (typeof status === "string" && status.indexOf("unresolved_") === 0)) {
+    if (status === "error") return "error";
+    if (typeof status === "string" && status.indexOf("unresolved_") === 0) {
       return "unresolved";
     }
     return null;
@@ -370,6 +372,7 @@
     var security = 0;
     var notSecurity = 0;
     var unresolved = 0;
+    var error = 0;
     payloads.forEach(function (payload) {
       if (!payload || typeof payload !== "object") return;
       var decision = null;
@@ -383,11 +386,13 @@
       if (bucket === "security") security += 1;
       else if (bucket === "not security") notSecurity += 1;
       else if (bucket === "unresolved") unresolved += 1;
+      else if (bucket === "error") error += 1;
     });
     state.totals = {
       security: security,
       notSecurity: notSecurity,
       unresolved: unresolved,
+      error: error,
     };
   }
 
@@ -744,11 +749,13 @@
       els.security.textContent = "—";
       els.notSecurity.textContent = "—";
       els.unresolved.textContent = "—";
+      if (els.errorTotal) els.errorTotal.textContent = "—";
       return;
     }
     els.security.textContent = String(state.totals.security);
     els.notSecurity.textContent = String(state.totals.notSecurity);
     els.unresolved.textContent = String(state.totals.unresolved);
+    if (els.errorTotal) els.errorTotal.textContent = String(state.totals.error || 0);
   }
 
   function renderMetrics() {

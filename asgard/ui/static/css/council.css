@@ -56,7 +56,8 @@
   color: var(--yes);
 }
 
-.council-total-n.is-unresolved {
+.council-total-n.is-unresolved,
+.council-total-n.is-error {
   color: var(--no);
 }
 

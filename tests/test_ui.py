@@ -390,6 +390,7 @@ def test_council_page_assets() -> None:
     assert 'id="council-security"' in page.text
     assert 'id="council-not-security"' in page.text
     assert 'id="council-unresolved"' in page.text
+    assert 'id="council-error-total"' in page.text
     assert 'id="council-loop"' in page.text
     assert 'aria-label="Pull requests"' in page.text
     assert 'aria-label="Status filter"' in page.text
