@@ -7,7 +7,8 @@ from anthropic import Anthropic
 from asgard.providers.errors import ProviderError
 from asgard.providers.models import LLMResponse, Message, response_schema
 
-_MAX_TOKENS = 4096
+# Batch evaluation of many PRs needs headroom; 4k truncates mid-JSON.
+_MAX_TOKENS = 16384
 
 
 class AnthropicHandler:
@@ -46,6 +47,17 @@ class AnthropicHandler:
         text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
         )
+        stop = getattr(response, "stop_reason", None)
+        if stop == "max_tokens":
+            raise ProviderError(
+                f"anthropic output truncated at max_tokens ({_MAX_TOKENS})",
+            )
+        if stop == "refusal":
+            raise ProviderError(text or "anthropic refused the request")
+        if schema is not None and not text.strip():
+            raise ProviderError(
+                f"anthropic returned empty text (stop_reason={stop!r})",
+            )
         usage = response.usage
         return LLMResponse(
             text=text,
