@@ -49,12 +49,22 @@ class ClassifyProgress(Event):
 class ClassificationAttempt(Event):
     type: Literal["ClassificationAttempt"] = "ClassificationAttempt"
     pr_id: str
+    has_security_discussion: bool | None = None
+    quote: str | None = None
+
+
+class EvaluatorFinding(BaseModel):
+    criterion: str
+    passed: bool
+    explanation: str = ""
 
 
 class EvaluatorVerdict(Event):
     type: Literal["EvaluatorVerdict"] = "EvaluatorVerdict"
     pr_id: str
     approved: bool
+    findings: list[EvaluatorFinding] = []
+    feedback: str = ""
 
 
 class LoopFinished(Event):

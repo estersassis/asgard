@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from asgard.core.classification import Classification
-from asgard.core.events import EvaluatorVerdict, Event
+from asgard.core.events import EvaluatorFinding, EvaluatorVerdict, Event
 from asgard.core.normalization import NormalizedPullRequest
 from asgard.prompts.evaluator import build_messages
 from asgard.providers.factory import LLMFactory
@@ -85,6 +85,22 @@ class BatchEvaluation(BaseModel):
     results: list[BatchEvaluationItem]
 
 
+def verdict_event(pr_id: str, evaluation: Evaluation) -> EvaluatorVerdict:
+    return EvaluatorVerdict(
+        pr_id=pr_id,
+        approved=evaluation.verdict == "APPROVE",
+        findings=[
+            EvaluatorFinding(
+                criterion=finding.criterion,
+                passed=finding.passed,
+                explanation=finding.explanation,
+            )
+            for finding in evaluation.findings
+        ],
+        feedback=evaluation.feedback,
+    )
+
+
 def deterministic_review(
     pull: NormalizedPullRequest,
     classification: Classification,
@@ -95,7 +111,7 @@ def deterministic_review(
     checked = _quote_revision(pull, classification)
     if checked is None:
         return None
-    emit(EvaluatorVerdict(pr_id=pull.context.pr_id, approved=False))
+    emit(verdict_event(pull.context.pr_id, checked))
     return checked
 
 
@@ -116,12 +132,7 @@ def evaluate(
     result = response.parsed
     if not isinstance(result, Evaluation):
         raise TypeError("evaluator response was not an Evaluation")
-    emit(
-        EvaluatorVerdict(
-            pr_id=pull.context.pr_id,
-            approved=result.verdict == "APPROVE",
-        )
-    )
+    emit(verdict_event(pull.context.pr_id, result))
     return result
 
 
@@ -162,6 +173,8 @@ def _evidence_problems(pull: NormalizedPullRequest, classification: Classificati
 
 
 def _location_text(pull: NormalizedPullRequest, location: str) -> str | None:
+    if location == "title":
+        return pull.context.title
     if location == "description":
         return pull.description
     general = _GENERAL.fullmatch(location)

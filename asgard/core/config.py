@@ -306,6 +306,20 @@ def probe_run(config: RunConfig, credentials: Any, *, opener: Any = None) -> dic
     return results
 
 
+def list_models(
+    provider: str,
+    *,
+    secrets: dict[str, str] | None = None,
+    opener: Any = None,
+) -> list[str]:
+    """Return model ids available for ``provider`` using current credentials."""
+    if provider not in ("ollama", "gemini", "openai", "anthropic"):
+        raise ConfigError(f"unknown provider: {provider}")
+    with _secret_env(secrets):
+        credentials = credentials_from_env()
+        return _list_provider_models(provider, credentials, opener=opener)
+
+
 def dump_toml(data: dict[str, Any]) -> str:
     """Serialize a RunConfig-shaped dict to TOML. Never writes secrets."""
     payload = dict(data)
@@ -495,6 +509,170 @@ def _check_provider(spec: RoleSpec, credentials: Any, opener: Any, secrets: list
         raise ConfigError(f"unknown provider: {spec.provider}")
     with _open(opener, request, secrets, spec.provider):
         return
+
+
+def _list_provider_models(provider: str, credentials: Any, *, opener: Any = None) -> list[str]:
+    open_url = opener or urllib.request.urlopen
+    secrets = [
+        key
+        for key in (
+            credentials.key_for("gemini"),
+            credentials.key_for("openai"),
+            credentials.key_for("anthropic"),
+        )
+        if key
+    ]
+    if provider == "ollama":
+        return _list_ollama_models(open_url, secrets)
+    if provider == "openai":
+        return _list_openai_models(credentials, open_url, secrets)
+    if provider == "gemini":
+        return _list_gemini_models(credentials, open_url, secrets)
+    if provider == "anthropic":
+        return _list_anthropic_models(credentials, open_url, secrets)
+    raise ConfigError(f"unknown provider: {provider}")
+
+
+def _list_ollama_models(opener: Any, secrets: list[str]) -> list[str]:
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    request = urllib.request.Request(f"{host}/api/tags", headers={"User-Agent": "asgard"})
+    with _open(opener, request, secrets, "ollama") as response:
+        body = response.read() if hasattr(response, "read") else b"{}"
+    try:
+        payload = json.loads(body.decode() if isinstance(body, bytes) else body or "{}")
+    except (TypeError, ValueError, UnicodeDecodeError):
+        payload = {}
+    names: list[str] = []
+    for item in payload.get("models", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or item.get("model")
+        if name:
+            names.append(str(name))
+    return sorted(set(names))
+
+
+def _list_openai_models(credentials: Any, opener: Any, secrets: list[str]) -> list[str]:
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/models",
+        headers={
+            "Authorization": f"Bearer {_key(credentials, 'openai')}",
+            "User-Agent": "asgard",
+        },
+    )
+    with _open(opener, request, secrets, "openai") as response:
+        body = response.read() if hasattr(response, "read") else b"{}"
+    try:
+        payload = json.loads(body.decode() if isinstance(body, bytes) else body or "{}")
+    except (TypeError, ValueError, UnicodeDecodeError):
+        payload = {}
+    names: list[str] = []
+    for item in payload.get("data", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        if isinstance(model_id, str) and _openai_chat_model(model_id):
+            names.append(model_id)
+    return sorted(set(names))
+
+
+def _openai_chat_model(model_id: str) -> bool:
+    lowered = model_id.lower()
+    skip = (
+        "embed",
+        "whisper",
+        "tts",
+        "dall-e",
+        "davinci",
+        "babbage",
+        "ada-",
+        "moderation",
+        "realtime",
+        "audio",
+        "transcribe",
+        "search-",
+        "image",
+    )
+    if any(token in lowered for token in skip):
+        return False
+    return lowered.startswith(("gpt-", "o1", "o3", "o4", "chatgpt-"))
+
+
+def _list_gemini_models(credentials: Any, opener: Any, secrets: list[str]) -> list[str]:
+    names: list[str] = []
+    page_token = ""
+    key = _key(credentials, "gemini")
+    while True:
+        url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100"
+        if page_token:
+            url += f"&pageToken={quote(page_token, safe='')}"
+        request = urllib.request.Request(
+            url,
+            headers={"x-goog-api-key": key, "User-Agent": "asgard"},
+        )
+        with _open(opener, request, secrets, "gemini") as response:
+            body = response.read() if hasattr(response, "read") else b"{}"
+        try:
+            payload = json.loads(body.decode() if isinstance(body, bytes) else body or "{}")
+        except (TypeError, ValueError, UnicodeDecodeError):
+            payload = {}
+        for item in payload.get("models", []) if isinstance(payload, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            methods = item.get("supportedGenerationMethods") or []
+            if "generateContent" not in methods:
+                continue
+            name = item.get("name")
+            if not isinstance(name, str):
+                continue
+            names.append(name.removeprefix("models/"))
+        page_token = ""
+        if isinstance(payload, dict):
+            next_token = payload.get("nextPageToken")
+            if isinstance(next_token, str) and next_token:
+                page_token = next_token
+        if not page_token:
+            break
+    return sorted(set(names))
+
+
+def _list_anthropic_models(credentials: Any, opener: Any, secrets: list[str]) -> list[str]:
+    names: list[str] = []
+    after: str | None = None
+    key = _key(credentials, "anthropic")
+    while True:
+        url = "https://api.anthropic.com/v1/models?limit=100"
+        if after:
+            url += f"&after_id={quote(after, safe='')}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "User-Agent": "asgard",
+            },
+        )
+        with _open(opener, request, secrets, "anthropic") as response:
+            body = response.read() if hasattr(response, "read") else b"{}"
+        try:
+            payload = json.loads(body.decode() if isinstance(body, bytes) else body or "{}")
+        except (TypeError, ValueError, UnicodeDecodeError):
+            payload = {}
+        batch = payload.get("data", []) if isinstance(payload, dict) else []
+        for item in batch:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("id")
+            if isinstance(model_id, str):
+                names.append(model_id)
+        has_more = isinstance(payload, dict) and payload.get("has_more") is True
+        if not has_more or not batch:
+            break
+        last = batch[-1] if isinstance(batch[-1], dict) else {}
+        after = last.get("id") if isinstance(last.get("id"), str) else None
+        if not after:
+            break
+    return sorted(set(names))
 
 
 def _require_ollama_model(body: bytes, model: str) -> None:

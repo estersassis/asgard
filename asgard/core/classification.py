@@ -11,7 +11,7 @@ from asgard.prompts.classifier import build_messages
 from asgard.providers.factory import LLMFactory
 
 _LOCATION = re.compile(
-    r"description|general_discussion\[\d+\]|code_review_threads\[\d+\]\.comments\[\d+\]"
+    r"title|description|general_discussion\[\d+\]|code_review_threads\[\d+\]\.comments\[\d+\]"
 )
 
 
@@ -24,9 +24,11 @@ class Evidence(BaseModel):
     @field_validator("location")
     @classmethod
     def _location(cls, value: str) -> str:
+        if value == "context.title":
+            value = "title"
         if _LOCATION.fullmatch(value) is None:
             raise ValueError(
-                "location must be description, general_discussion[i], "
+                "location must be title, description, general_discussion[i], "
                 "or code_review_threads[j].comments[k]"
             )
         return value
@@ -94,5 +96,12 @@ def classify(
     result = response.parsed
     if not isinstance(result, Classification):
         raise TypeError("classifier response was not a Classification")
-    emit(ClassificationAttempt(pr_id=pull.context.pr_id))
+    quote = result.evidence[0].quote if result.evidence else None
+    emit(
+        ClassificationAttempt(
+            pr_id=pull.context.pr_id,
+            has_security_discussion=result.has_security_discussion,
+            quote=quote,
+        )
+    )
     return result
