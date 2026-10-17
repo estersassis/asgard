@@ -170,21 +170,22 @@ def test_classifier_batch_schema_uses_the_single_pr_evidence_rules() -> None:
                 ]
             }
         )
-    with pytest.raises(ValidationError, match="evidence must be empty"):
-        BatchClassification.model_validate(
-            {
-                "results": [
-                    {
-                        "pr_id": "7",
-                        "has_security_discussion": False,
-                        "evidence": [
-                            {"quote": "authentication bypass", "location": "description"}
-                        ],
-                        "rationale": "no security discussion",
-                    }
-                ]
-            }
-        )
+    # False + non-empty evidence is coerced (same as single-PR Classification).
+    coerced = BatchClassification.model_validate(
+        {
+            "results": [
+                {
+                    "pr_id": "7",
+                    "has_security_discussion": False,
+                    "evidence": [
+                        {"quote": "authentication bypass", "location": "description"}
+                    ],
+                    "rationale": "no security discussion",
+                }
+            ]
+        }
+    )
+    assert coerced.results[0].evidence == []
     with pytest.raises(ValidationError):
         BatchClassification.model_validate(
             {
