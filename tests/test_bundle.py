@@ -15,8 +15,7 @@ from asgard.core.stage import RunContext
 from asgard.core.stages.bundle import BundleStage
 from asgard.prompts.classifier import SYSTEM_PROMPT as CLASSIFIER_PROMPT
 from asgard.prompts.evaluator import SYSTEM_PROMPT as EVALUATOR_PROMPT
-from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT
-from asgard.prompts.synthesizer import fill_repository
+from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT, fill_repository
 
 TOKEN = "ghp_bundle_secret"
 _METRICS = {

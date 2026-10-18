@@ -16,8 +16,8 @@ from asgard.core.prompt_registry import (
     resolve_reduce_prompt,
     resolve_system_prompt,
 )
-from asgard.prompts.synthesizer import fill_repository
 from asgard.core.stage import RunContext, Stage
+from asgard.prompts.synthesizer import fill_repository
 from asgard.providers.models import LLMSettings
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
