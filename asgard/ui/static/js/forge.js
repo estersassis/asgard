@@ -513,14 +513,21 @@
       return;
     }
 
+    var config = els.config.value.trim();
+    if (!config) {
+      setError(
+        "Set a config path before running the pilot (asgard.toml or a run's config.json)."
+      );
+      return;
+    }
+
     var payload = {
       candidate: state.selectedId,
       active: state.activeIds.classifier || "default",
       pilot_set: pilotSet,
+      config: config,
       thresholds: readThresholds(),
     };
-    var config = els.config.value.trim();
-    if (config) payload.config = config;
 
     state.running = true;
     state.decided = null;
@@ -729,14 +736,28 @@
   });
   els.config.addEventListener("input", updatePromote);
 
+  function prefillConfigFromRun() {
+    var runId = (root.getAttribute("data-run") || "").trim();
+    if (!runId || els.config.value.trim()) return Promise.resolve();
+    return api("/api/runs/" + encodeURIComponent(runId)).then(function (result) {
+      if (!result.ok || !result.body || !result.body.output_dir) return;
+      els.config.value = String(result.body.output_dir).replace(/\/?$/, "") + "/config.json";
+    });
+  }
+
   applyThresholdLabels({ f1_min: 0.9, kappa_min: 0.8 });
   setDetailsOpen(false);
   updateTabs();
   updateRoleChrome();
   updatePromote();
 
-  Promise.all([loadActive(), loadPilotSets()])
-    .then(loadVersions)
+  prefillConfigFromRun()
+    .catch(function () {
+      /* ignore missing run */
+    })
+    .then(function () {
+      return Promise.all([loadActive(), loadPilotSets()]).then(loadVersions);
+    })
     .catch(function (err) {
       setError(err && err.message ? err.message : "Could not load Forge.");
     });

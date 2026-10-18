@@ -414,6 +414,14 @@ def create_app(
         candidate = body.candidate.strip()
         if not candidate:
             raise HTTPException(status_code=400, detail="candidate must not be empty")
+        if body.config is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "config path is required "
+                    "(asgard.toml or a run's config.json with llm settings)"
+                ),
+            )
         try:
             pilot_set = pilots.resolve_pilot_set(body.pilot_set)
         except (ValueError, LookupError) as exc:

@@ -5,7 +5,7 @@
 {% endblock %}
 {% block page_class %} forge-page{% endblock %}
 {% block content %}
-  <div class="forge" id="forge">
+  <div class="forge" id="forge" data-run="{{ request.query_params.get('run', '') }}">
     <div class="forge-hero">
       <span class="lbl">Advanced</span>
       <h1 class="serif forge-title">The <em>forge</em></h1>
@@ -29,6 +29,11 @@
       <span class="forge-meta" id="forge-meta"></span>
 
       <textarea id="forge-prompt" aria-label="Prompt" rows="8" spellcheck="false"></textarea>
+
+      <label class="forge-field forge-config-field" id="forge-config-field">
+        <span class="lbl">Config path</span>
+        <input class="sel" type="text" id="forge-config" aria-label="Config path" placeholder="asgard.toml or runs/…/config.json" spellcheck="false">
+      </label>
 
       <div class="forge-pilot-row" id="forge-pilot-controls">
         <label class="forge-field forge-field-grow">
@@ -135,11 +140,6 @@
 
         <span class="forge-pass-line" id="forge-pass-line"></span>
       </div>
-
-      <label class="forge-field forge-config-field">
-        <span class="lbl">Config path</span>
-        <input class="sel" type="text" id="forge-config" aria-label="Config path" placeholder="path/to/asgard.toml" spellcheck="false">
-      </label>
 
       <div class="forge-actions">
         <span class="forge-gate-status" id="forge-gate-status"></span>
