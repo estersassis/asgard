@@ -12,7 +12,7 @@ from asgard.core.pilot.runner import PilotResult, run_pilot
 from asgard.core.pilot.set import BUNDLED_SETS
 from asgard.providers.factory import LLMFactory
 
-_DEFAULT_PILOT_SET = "example"
+_DEFAULT_PILOT_SET = "binary_v2"
 _DEFAULT_PILOT_ROOT = Path("runs") / "_pilot"
 
 

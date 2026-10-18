@@ -1,0 +1,279 @@
+{
+  "id": "binary_v2",
+  "name": "asgard-binary-pilot-v2",
+  "items": [
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-001",
+          "title": "Change placeholder text in password field",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "Replaces the placeholder \"Password\" with \"Enter your password\" on the sign-in form, per the copy review.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-002",
+          "title": "Update requests to 2.31.0",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "Routine dependency update.",
+        "general_discussion": [
+          "maintainer-bea: Not entirely routine: 2.31.0 contains the fix for the Proxy-Authorization header leak (CVE-2023-32681), we should mention it in the release notes.",
+          "author-nick: Good point, added to CHANGES.md."
+        ],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-003",
+          "title": "Batch queries in CSV export",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "Exports used one query per row. They now fetch in batches of 1000, which brings a 50k row export from 4 minutes to 11 seconds.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-004",
+          "title": "Bump eslint from 8.1.0 to 8.2.0",
+          "state": "open",
+          "is_merged": false
+        },
+        "description": "Bumps eslint from 8.1.0 to 8.2.0.\n\nRelease notes:\n- New rule `no-unused-private-class-members`\n- Improved performance of `--cache`\n\nDependabot will resolve any conflicts with this PR as long as you don't alter it yourself.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-005",
+          "title": "Use SHA-256 for cache key hashing",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "Cache keys longer than 250 characters are hashed. We used CRC32, which produced collisions in staging with ~2M keys; SHA-256 removes them. Overhead is ~0.3 µs per key.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-006",
+          "title": "Split auth module into its own package",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "Moves `app/auth/*.py` to `packages/auth/` so it can be versioned independently. Only import paths change.",
+        "general_discussion": [],
+        "code_review_threads": [
+          {
+            "scope": "packages/auth/__init__.py",
+            "comments": [
+              "rev-hugo: Can we re-export the old names for one release to avoid breaking plugins?",
+              "author-zoe: Added shims with a DeprecationWarning."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-007",
+          "title": "Bump pillow from 9.0.0 to 9.0.1",
+          "state": "open",
+          "is_merged": false
+        },
+        "description": "Bumps pillow from 9.0.0 to 9.0.1.\n\nRelease notes:\n- Fixed ImagePath.Path array handling (CVE-2022-22815, CVE-2022-22816)\n- Fixed buffer overflow in PcxDecode (CVE-2022-22817)\n\nDependabot will resolve any conflicts with this PR as long as you don't alter it yourself.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-008",
+          "title": "Default SESSION_COOKIE_SECURE to True",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "New projects generated from the template ship with `SESSION_COOKIE_SECURE = False`, so session cookies are sent over plain HTTP unless people remember to change it. This flips the default and documents how to disable it for local development.",
+        "general_discussion": [
+          "user-kenji: This will break local dev over http for some people.",
+          "author-elena: Yes, that's why the docs section shows the override for DEBUG mode."
+        ],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-009",
+          "title": "Redesign password reset page",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "New layout following the 2026 design system: centered card, new illustrations and updated copy. Screenshots attached.",
+        "general_discussion": [],
+        "code_review_threads": [
+          {
+            "scope": "templates/password_reset.html",
+            "comments": [
+              "rev-dani: The new copy says \"No account found with that email\". The old page always showed the same message on purpose, otherwise this becomes an account enumeration endpoint.",
+              "author-lu: Reverted to the generic message: \"If an account exists, you'll receive an email\"."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-010",
+          "title": "Move document permission checks into a mixin",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "Pure refactor: the four document views had copy-pasted permission code, now they share `DocumentPermissionMixin`. No behaviour change intended.",
+        "general_discussion": [],
+        "code_review_threads": [
+          {
+            "scope": "documents/mixins.py",
+            "comments": [
+              "rev-ines: The old `DocumentEditView` also checked `doc.owner == request.user`. The mixin only checks `is_authenticated`, so after this change any logged-in user can edit any document.",
+              "author-caio: Wow, good catch. Added the owner check back to the mixin and a test for it."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-011",
+          "title": "Make file uploads retry on flaky networks",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "Uploads now retry up to 3 times with exponential backoff so large files complete securely even on unstable mobile connections.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-012",
+          "title": "Fix SQL injection in product search endpoint",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "The `q` parameter of `/api/products/search` was concatenated directly into a raw SQL string, which allowed SQL injection. This PR switches to parameterized queries and adds a regression test with a `' OR 1=1 --` payload.",
+        "general_discussion": [
+          "maintainer-ana: Thanks! Can we get this into the next patch release?",
+          "author-joao: Sure, I'll open the backport PR."
+        ],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-013",
+          "title": "Show a friendly message when the session expires",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "When an API call returns 401 the app now shows a toast \"Your session expired, please sign in again\" and redirects to the login page, instead of a blank screen.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": false,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-014",
+          "title": "Fix typo in README",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "\"recieve\" -> \"receive\" in the installation section.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    },
+    {
+      "label": true,
+      "pr": {
+        "schema_version": "1",
+        "context": {
+          "repository": "asgard/binary-pilot",
+          "pr_id": "pilot-015",
+          "title": "Remove hardcoded AWS credentials from settings",
+          "state": "closed",
+          "is_merged": true
+        },
+        "description": "`settings/base.py` contained a hardcoded AWS access key and secret that were committed in 2023. They have been rotated; this PR loads them from environment variables instead.",
+        "general_discussion": [],
+        "code_review_threads": []
+      }
+    }
+  ]
+}
