@@ -116,6 +116,8 @@ body {
 }
 
 .link {
+  display: inline-flex;
+  align-items: center;
   background: none;
   border: 0;
   color: var(--ink-soft);
@@ -124,6 +126,7 @@ body {
   cursor: pointer;
   min-height: 44px;
   padding: 0;
+  text-decoration: none;
 }
 
 .link:hover {

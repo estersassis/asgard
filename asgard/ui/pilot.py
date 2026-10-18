@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from asgard.core.config import ConfigError, load_dotenv, load_run
 from asgard.core.pilot.gate import GateThresholds, PromoteError, promote
-from asgard.core.pilot.runner import run_pilot
+from asgard.core.pilot.runner import PilotMode, PilotProgress, run_pilot
 from asgard.core.pilot.set import BUNDLED_SETS, PilotSet, load_pilot_set
 from asgard.providers.factory import LLMFactory
 
@@ -40,6 +40,7 @@ class PilotSession:
         self.output_dir: Path | None = None
         self.error: str | None = None
         self.status: PilotStatus = "running"
+        self.progress: dict[str, Any] | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._running = False
@@ -83,11 +84,12 @@ class PilotSession:
         *,
         candidate: str,
         active: str | None = None,
-        pilot_set: str | Path = "example",
+        pilot_set: str | Path = "binary_v2",
         config: Path | None = None,
         thresholds: GateThresholds | None = None,
         registry_dir: Path | None = None,
         output_dir: Path | None = None,
+        mode: PilotMode = "classifier",
     ) -> Path:
         with self._lock:
             if self._running:
@@ -107,6 +109,15 @@ class PilotSession:
             self.output_dir = out
             self.error = None
             self.status = "running"
+            self.progress = {
+                "phase": "active",
+                "phase_label": "Active prompt",
+                "done": 0,
+                "total": 0,
+                "overall_done": 0,
+                "overall_total": 0,
+                "message": "Running pilot…",
+            }
             self._running = True
             self._thread = threading.Thread(
                 target=self._run,
@@ -119,6 +130,7 @@ class PilotSession:
                     "max_iterations": run_config.max_iterations,
                     "thresholds": thresholds,
                     "output_dir": out,
+                    "mode": mode,
                 },
                 daemon=True,
                 name=f"asgard-pilot-{self.id[:8]}",
@@ -131,6 +143,16 @@ class PilotSession:
         if thread is not None:
             thread.join(timeout=timeout)
 
+    def _set_progress(self, progress: PilotProgress) -> None:
+        with self._lock:
+            self.progress = progress.model_dump(mode="json")
+
+    def progress_snapshot(self) -> dict[str, Any] | None:
+        with self._lock:
+            if self.progress is None:
+                return None
+            return dict(self.progress)
+
     def _run(
         self,
         *,
@@ -142,6 +164,7 @@ class PilotSession:
         max_iterations: int,
         thresholds: GateThresholds | None,
         output_dir: Path,
+        mode: PilotMode = "classifier",
     ) -> None:
         try:
             run_pilot(
@@ -153,6 +176,8 @@ class PilotSession:
                 max_iterations=max_iterations,
                 thresholds=thresholds,
                 output_dir=output_dir,
+                mode=mode,
+                on_progress=self._set_progress,
             )
             self.status = "done"
             self.error = None
@@ -231,8 +256,16 @@ class PilotStore:
         items: list[dict[str, Any]] = []
         seen: set[str] = set()
         for set_id in sorted(BUNDLED_SETS):
-            pilot = load_pilot_set(set_id)
-            items.append(_set_summary(pilot, bundled=True))
+            try:
+                pilot = load_pilot_set(set_id)
+            except (OSError, ValueError, LookupError, json.JSONDecodeError, ValidationError):
+                continue
+            # Selectable id is the bundled key (filename stem), not pilot.id,
+            # so resolve_pilot_set / load_pilot_set always round-trip.
+            summary = _set_summary(pilot, bundled=True)
+            summary["id"] = set_id
+            items.append(summary)
+            seen.add(set_id)
             seen.add(pilot.id)
         if self.uploads_dir.is_dir():
             for path in sorted(self.uploads_dir.glob("*.json")):

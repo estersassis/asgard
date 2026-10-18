@@ -518,8 +518,13 @@ def test_forge_page_assets() -> None:
     assert 'id="forge-tab-classifier"' in page.text
     assert 'id="forge-version"' in page.text
     assert 'id="forge-save"' in page.text
+    assert 'id="forge-save-form"' in page.text
+    assert 'id="forge-save-name"' in page.text
     assert 'id="forge-prompt"' in page.text
     assert 'id="forge-pilot-set"' in page.text
+    assert 'id="forge-pilot-mode"' in page.text
+    assert "Classifier only" in page.text
+    assert "Classifier + evaluator" in page.text
     assert 'id="forge-run"' in page.text
     assert 'id="forge-promote"' in page.text
     assert 'id="forge-reject"' in page.text
@@ -546,6 +551,12 @@ def test_forge_page_assets() -> None:
     assert "/api/pilot/runs" in js.text
     assert "/api/pilot/promote" in js.text
     assert "can_promote" in js.text
+    assert 'mode: mode' in js.text
+    assert "formatPilotProgress" in js.text
+    assert "progress" in js.text
+    assert "setSaveFormOpen" in js.text
+    assert "runAfterSave" in js.text
+    assert "window.prompt" not in js.text
 
 
 def _forge_pilot_metrics(*, f1: float, kappa: float, candidate: str) -> dict[str, Any]:
@@ -673,6 +684,10 @@ def test_forge_pilot_sets_and_promote(
     assert sets.status_code == 200
     bundled = sets.json()
     assert any(item["id"] == "example" and item["bundled"] is True for item in bundled)
+    assert any(
+        item["id"] == "binary_v2" and item["bundled"] is True and item["item_count"] == 15
+        for item in bundled
+    )
 
     example = load_pilot_set("example")
     upload_body = {

@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from asgard.ui.app import create_app
-from asgard.ui.runs import discover_runs, resolve_run_dir, stable_run_id
+from asgard.ui.runs import discover_runs, resolve_config_path, resolve_run_dir, stable_run_id
 from asgard.ui.session import RunSession
 
 
@@ -39,6 +39,11 @@ def test_stable_run_id_and_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert resolve_run_dir(run_id) == run_dir.resolve()
     assert resolve_run_dir("missing--id") is None
     assert resolve_run_dir("../evil--stamp") is None
+
+    mistaken = Path("runs") / run_id / "config.json"
+    assert not mistaken.is_file()
+    assert resolve_config_path(mistaken) == (run_dir / "config.json").resolve()
+    assert resolve_config_path(run_dir / "config.json") == run_dir / "config.json"
 
 
 def test_discover_runs_includes_tmp_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

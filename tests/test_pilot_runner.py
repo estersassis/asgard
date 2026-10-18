@@ -199,8 +199,71 @@ def test_single_pass_skips_evaluator(tmp_path: Path) -> None:
     # adds one classify per PR and never calls the evaluator.
     assert handler.classifier_calls == n * 3
     assert handler.evaluator_calls == n * 2
+    assert result.mode == "full"
     assert result.candidate_single_pass.confusion.n == n
     assert (tmp_path / "single" / "candidate" / "classify" / "output.json").is_file()
+
+
+def test_classifier_mode_reports_progress(tmp_path: Path) -> None:
+    pilot = load_pilot_set("example")
+    slim = PilotSet(
+        id="slim",
+        name="slim",
+        items=[pilot.items[0], pilot.items[2]],
+    )
+    registry = _registry(tmp_path)
+    versions = [v.id for v in registry.list("classifier") if v.id != "default"]
+    candidate_id = next(v for v in versions if v.startswith("candidate-pilot"))
+
+    updates: list[str] = []
+    run_pilot(
+        slim,
+        candidate=candidate_id,
+        active="default",
+        factory=_factory(_RecordingFake()),
+        registry_dir=registry.root,
+        output_dir=tmp_path / "progress",
+        mode="classifier",
+        on_progress=lambda progress: updates.append(progress.message),
+    )
+
+    assert updates
+    assert any("Active prompt" in message for message in updates)
+    assert any("Candidate prompt" in message for message in updates)
+    assert any("2/2 PRs" in message for message in updates)
+    assert any("overall 4/4" in message for message in updates)
+    assert not any("/5" in message for message in updates)
+
+
+def test_classifier_mode_skips_full_loop(tmp_path: Path) -> None:
+    pilot = load_pilot_set("example")
+    slim = PilotSet(
+        id="slim",
+        name="slim",
+        items=[pilot.items[0], pilot.items[2]],
+    )
+    registry = _registry(tmp_path)
+    versions = [v.id for v in registry.list("classifier") if v.id != "default"]
+    candidate_id = next(v for v in versions if v.startswith("candidate-pilot"))
+
+    handler = _RecordingFake()
+    result = run_pilot(
+        slim,
+        candidate=candidate_id,
+        active="default",
+        factory=_factory(handler),
+        registry_dir=registry.root,
+        output_dir=tmp_path / "classifier-only",
+        mode="classifier",
+    )
+
+    n = len(slim.items)
+    assert result.mode == "classifier"
+    assert handler.classifier_calls == n * 2
+    assert handler.evaluator_calls == 0
+    assert result.candidate == result.candidate_single_pass
+    assert not (tmp_path / "classifier-only" / "active").exists()
+    assert not (tmp_path / "classifier-only" / "candidate").exists()
 
 
 def test_unknown_candidate_raises(tmp_path: Path) -> None:
