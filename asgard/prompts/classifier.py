@@ -102,8 +102,33 @@ quote or a corrected location, never the rejected evidence unchanged.
 """
 
 
+def resolve_batch_system_prompt(system_prompt: str | None = None) -> str:
+    """Map a solo/registry prompt onto a batch-capable system prompt.
+
+    The built-in solo prompt becomes :data:`BATCH_SYSTEM_PROMPT`. Custom solo
+    prompts keep their criteria and gain the batch JSON envelope. Prompts that
+    already describe a ``results`` list are used as-is.
+    """
+    if system_prompt is None or system_prompt.strip() == SYSTEM_PROMPT.strip():
+        return BATCH_SYSTEM_PROMPT
+    if '"results"' in system_prompt or "results\":" in system_prompt:
+        return system_prompt
+    return (
+        "You are classifying several pull requests in one call. "
+        "Judge each independently; never use text from one as evidence for another.\n\n"
+        f"{system_prompt.strip()}\n\n"
+        "For this call, ignore any single-PR-only return format above and "
+        'return JSON: {"results": [{"pr_id", "has_security_discussion", '
+        '"evidence": [{"quote", "location"}], "rationale"}]}, one object per '
+        "pull request. If true, evidence has at least one item; if false, "
+        "evidence is []."
+    )
+
+
 def build_batch_messages(
     items: Sequence[tuple[NormalizedPullRequest, str | None, str | None]],
+    *,
+    system_prompt: str | None = None,
 ) -> list[Message]:
     """Return the batch system prompt and one user message for these pull requests.
 
@@ -111,6 +136,8 @@ def build_batch_messages(
     previous response and evaluator feedback. ``previous`` and ``feedback``
     are included together or omitted together. Feedback applies only to the
     pull request it is attached to.
+    ``system_prompt`` overrides the built-in batch prompt when set (solo
+    prompts are adapted via :func:`resolve_batch_system_prompt`).
     """
     if not items:
         raise ValueError("a batch requires at least one pull request")
@@ -134,6 +161,6 @@ def build_batch_messages(
         f"{json.dumps(payload, indent=2)}"
     )
     return [
-        Message(role="system", content=BATCH_SYSTEM_PROMPT),
+        Message(role="system", content=resolve_batch_system_prompt(system_prompt)),
         Message(role="user", content=content),
     ]

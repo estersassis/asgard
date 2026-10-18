@@ -58,6 +58,8 @@ def run_pilot_command(
         max_iterations=run_config.max_iterations,
         thresholds=thresholds,
         output_dir=output_dir,
+        batch_size=run_config.batch_size,
+        batch_max_chars=run_config.batch_max_chars,
     )
     _print_run(result)
     return result

@@ -89,13 +89,34 @@ feedback must start with "The decision is wrong:".
 """
 
 
+def resolve_batch_system_prompt(system_prompt: str | None = None) -> str:
+    """Map a solo/registry prompt onto a batch-capable evaluator system prompt."""
+    if system_prompt is None or system_prompt.strip() == SYSTEM_PROMPT.strip():
+        return BATCH_SYSTEM_PROMPT
+    if '"results"' in system_prompt or "results\":" in system_prompt:
+        return system_prompt
+    return (
+        "You are reviewing classifications of several pull requests in one call. "
+        "Judge each on its own; do not reclassify, and never use one pull request "
+        "or classification when judging another.\n\n"
+        f"{system_prompt.strip()}\n\n"
+        "For this call, ignore any single-PR-only return format above and "
+        'return JSON: {"results": [{"pr_id", "verdict", "findings", "feedback"}]}, '
+        "one object per pull request."
+    )
+
+
 def build_batch_messages(
     items: Sequence[tuple[NormalizedPullRequest, Classification]],
+    *,
+    system_prompt: str | None = None,
 ) -> list[Message]:
     """Return the batch system prompt and one user message for these pairs.
 
     Each item is one pull request and the classification to review.
     Pairs are judged independently.
+    ``system_prompt`` overrides the built-in batch prompt when set (solo
+    prompts are adapted via :func:`resolve_batch_system_prompt`).
     """
     if not items:
         raise ValueError("a batch requires at least one pull request")
@@ -115,6 +136,6 @@ def build_batch_messages(
         f"{json.dumps(payload, indent=2)}"
     )
     return [
-        Message(role="system", content=BATCH_SYSTEM_PROMPT),
+        Message(role="system", content=resolve_batch_system_prompt(system_prompt)),
         Message(role="user", content=content),
     ]

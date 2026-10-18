@@ -90,6 +90,8 @@ class PilotSession:
         registry_dir: Path | None = None,
         output_dir: Path | None = None,
         mode: PilotMode = "classifier",
+        batch_size: int | None = None,
+        batch_max_chars: int | None = None,
     ) -> Path:
         with self._lock:
             if self._running:
@@ -131,6 +133,12 @@ class PilotSession:
                     "thresholds": thresholds,
                     "output_dir": out,
                     "mode": mode,
+                    "batch_size": batch_size
+                    if batch_size is not None
+                    else run_config.batch_size,
+                    "batch_max_chars": batch_max_chars
+                    if batch_max_chars is not None
+                    else run_config.batch_max_chars,
                 },
                 daemon=True,
                 name=f"asgard-pilot-{self.id[:8]}",
@@ -165,6 +173,8 @@ class PilotSession:
         thresholds: GateThresholds | None,
         output_dir: Path,
         mode: PilotMode = "classifier",
+        batch_size: int = 1,
+        batch_max_chars: int | None = None,
     ) -> None:
         try:
             run_pilot(
@@ -177,6 +187,8 @@ class PilotSession:
                 thresholds=thresholds,
                 output_dir=output_dir,
                 mode=mode,
+                batch_size=batch_size,
+                batch_max_chars=batch_max_chars,
                 on_progress=self._set_progress,
             )
             self.status = "done"

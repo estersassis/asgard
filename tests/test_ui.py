@@ -523,6 +523,7 @@ def test_forge_page_assets() -> None:
     assert 'id="forge-prompt"' in page.text
     assert 'id="forge-pilot-set"' in page.text
     assert 'id="forge-pilot-mode"' in page.text
+    assert 'id="forge-batch-size"' in page.text
     assert "Classifier only" in page.text
     assert "Classifier + evaluator" in page.text
     assert 'id="forge-run"' in page.text
@@ -552,6 +553,9 @@ def test_forge_page_assets() -> None:
     assert "/api/pilot/promote" in js.text
     assert "can_promote" in js.text
     assert 'mode: mode' in js.text
+    assert "batch_size" in js.text
+    assert "batch=true" in js.text
+    assert "reloadPromptForBatchSize" in js.text
     assert "formatPilotProgress" in js.text
     assert "progress" in js.text
     assert "setSaveFormOpen" in js.text
@@ -631,7 +635,19 @@ def test_forge_prompts_api(tmp_path: Path) -> None:
     assert default.status_code == 200
     assert default.json()["id"] == "default"
     assert default.json()["body"]
+    assert default.json()["batch"] is False
     assert default.json()["sha256"] == content_sha256(default.json()["body"])
+
+    from asgard.prompts.classifier import BATCH_SYSTEM_PROMPT, SYSTEM_PROMPT
+
+    assert default.json()["body"] == SYSTEM_PROMPT
+    batched = client.get(
+        f"/api/prompts/classifier/default?registry_dir={registry}&batch=true"
+    )
+    assert batched.status_code == 200
+    assert batched.json()["batch"] is True
+    assert batched.json()["body"] == BATCH_SYSTEM_PROMPT
+    assert batched.json()["body"] != default.json()["body"]
 
     saved = client.post(
         "/api/prompts/classifier",
@@ -656,7 +672,8 @@ def test_forge_prompts_api(tmp_path: Path) -> None:
 
     got = client.get(f"/api/prompts/classifier/forge-strict?registry_dir={registry}")
     assert got.status_code == 200
-    assert got.json() == payload
+    assert got.json()["batch"] is False
+    assert {key: value for key, value in got.json().items() if key != "batch"} == payload
 
     active = client.get("/api/prompts/active")
     assert active.status_code == 200

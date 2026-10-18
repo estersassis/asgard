@@ -245,6 +245,10 @@
   flex: 0 1 220px;
 }
 
+.forge-batch-field {
+  flex: 0 1 120px;
+}
+
 .forge-actions {
   display: flex;
   justify-content: space-between;

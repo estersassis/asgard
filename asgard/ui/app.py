@@ -33,6 +33,7 @@ from asgard.core.pilot.set import PilotSet
 from asgard.core.prompt_registry import (
     ROLES,
     PromptRegistry,
+    adapt_prompt_body,
     default_registry_root,
 )
 from asgard.prompts.synthesizer import SYSTEM_PROMPT
@@ -135,6 +136,8 @@ class StartPilotBody(BaseModel):
     thresholds: PilotThresholdsBody | None = None
     registry_dir: Path | None = None
     mode: Literal["classifier", "full"] = "classifier"
+    batch_size: int | None = Field(default=None, ge=1)
+    batch_max_chars: int | None = Field(default=None, ge=1)
 
 
 class PromotePilotBody(BaseModel):
@@ -378,13 +381,17 @@ def create_app(
         role: str,
         version_id: str,
         registry_dir: Path | None = None,
+        batch: bool = False,
     ) -> dict[str, Any]:
         _check_prompt_role(role)
         try:
             version = _prompt_registry(registry_dir).get(role, version_id)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return version.model_dump(mode="json")
+        payload = version.model_dump(mode="json")
+        payload["body"] = adapt_prompt_body(role, version.body, batch=batch)
+        payload["batch"] = batch
+        return payload
 
     @app.post("/api/prompts/{role}")
     async def save_prompt(role: str, body: PromptSaveBody) -> dict[str, Any]:
@@ -442,6 +449,8 @@ def create_app(
                 thresholds=thresholds,
                 registry_dir=body.registry_dir,
                 mode=body.mode,
+                batch_size=body.batch_size,
+                batch_max_chars=body.batch_max_chars,
             )
         except (ConfigError, LookupError, ValueError) as exc:
             session.status = "error"

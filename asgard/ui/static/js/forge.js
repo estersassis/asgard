@@ -24,6 +24,7 @@
     pilotHint: document.getElementById("forge-pilot-hint"),
     pilotSet: document.getElementById("forge-pilot-set"),
     pilotMode: document.getElementById("forge-pilot-mode"),
+    batchSize: document.getElementById("forge-batch-size"),
     upload: document.getElementById("forge-upload"),
     run: document.getElementById("forge-run"),
     result: document.getElementById("forge-result"),
@@ -69,6 +70,7 @@
     activeIds: { classifier: "default", evaluator: "default" },
     selectedId: "",
     loadedBody: "",
+    batchView: false,
     pilotSets: [],
     metrics: null,
     pilotRunId: null,
@@ -259,11 +261,20 @@
       els.meta.textContent = "";
       return;
     }
-    var parts = ["sha256 " + shortSha(version.sha256)];
+    var parts = [];
+    if (state.batchView) parts.push("batch prompt");
+    parts.push("sha256 " + shortSha(version.sha256));
     var date = formatDate(version.created_at);
     if (date) parts.push(date);
     if (version.notes) parts.push("“" + version.notes + "”");
     els.meta.textContent = parts.join(" · ");
+  }
+
+  function readBatchSize() {
+    if (!els.batchSize) return 1;
+    var value = parseInt(String(els.batchSize.value || "1"), 10);
+    if (!Number.isFinite(value) || value < 1) return 1;
+    return value;
   }
 
   function renderPilotSets() {
@@ -417,20 +428,43 @@
     if (!versionId) {
       els.prompt.value = "";
       state.loadedBody = "";
+      state.batchView = false;
       renderMeta(null);
       return Promise.resolve();
     }
-    return api(
-      "/api/prompts/" + encodeURIComponent(state.role) + "/" + encodeURIComponent(versionId)
-    ).then(function (result) {
+    var batch = readBatchSize() > 1;
+    var path =
+      "/api/prompts/" +
+      encodeURIComponent(state.role) +
+      "/" +
+      encodeURIComponent(versionId) +
+      (batch ? "?batch=true" : "");
+    return api(path).then(function (result) {
       if (!result.ok) {
         throw new Error(detailMessage(result.body, "Could not load prompt."));
       }
       state.selectedId = versionId;
+      state.batchView = batch;
       state.loadedBody = result.body.body || "";
       els.prompt.value = state.loadedBody;
       renderMeta(result.body);
       updateRoleChrome();
+    });
+  }
+
+  function reloadPromptForBatchSize() {
+    if (!state.selectedId) return;
+    if (isDirty()) {
+      setStatus(
+        "Unsaved edits kept. Save or re-select the version to load the " +
+          (readBatchSize() > 1 ? "batch" : "solo") +
+          " prompt."
+      );
+      return;
+    }
+    setStatus("");
+    loadPromptBody(state.selectedId).catch(function (err) {
+      setError(err && err.message ? err.message : "Could not load prompt.");
     });
   }
 
@@ -607,6 +641,15 @@
     var mode = els.pilotMode ? els.pilotMode.value : "classifier";
     if (mode !== "full") mode = "classifier";
 
+    var batchSize = 1;
+    if (els.batchSize) {
+      batchSize = parseInt(String(els.batchSize.value || "1"), 10);
+      if (!Number.isFinite(batchSize) || batchSize < 1) {
+        setError("Batch size must be an integer ≥ 1.");
+        return;
+      }
+    }
+
     var payload;
     try {
       payload = {
@@ -616,6 +659,7 @@
         config: config,
         thresholds: readThresholds(),
         mode: mode,
+        batch_size: batchSize,
       };
     } catch (err) {
       setError(err && err.message ? err.message : "Could not build pilot request.");
@@ -809,6 +853,10 @@
       setError(err && err.message ? err.message : "Could not load prompt.");
     });
   });
+
+  if (els.batchSize) {
+    els.batchSize.addEventListener("change", reloadPromptForBatchSize);
+  }
 
   els.save.addEventListener("click", function () {
     state.runAfterSave = false;

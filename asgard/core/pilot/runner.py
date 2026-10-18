@@ -10,14 +10,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from asgard.core.classification import classify
-from asgard.core.events import ClassifyProgress, Event
+from asgard.core.classification import BatchClassification, classify
+from asgard.core.events import ClassificationAttempt, ClassifyProgress, Event, LoopFinished
 from asgard.core.pilot.gate import GateResult, GateThresholds, evaluate_gates
-from asgard.core.pilot.set import PilotSet, load_pilot_set
+from asgard.core.pilot.set import PilotItem, PilotSet, load_pilot_set
 from asgard.core.pilot.statistics import Confusion, PilotMetrics, compute_metrics
 from asgard.core.prompt_registry import PromptRegistry, default_registry_root
 from asgard.core.stage import RunContext
-from asgard.core.stages.classify import ClassifyStage
+from asgard.core.stages.classify import ClassifyStage, _pack
+from asgard.prompts.classifier import build_batch_messages
 from asgard.providers.errors import ProviderError
 from asgard.providers.factory import LLMFactory
 from asgard.providers.models import LLMSettings, RoleSpec
@@ -94,6 +95,8 @@ def run_pilot(
     output_dir: Path | None = None,
     emit: Callable[[Event], None] | None = None,
     mode: PilotMode = "full",
+    batch_size: int = 1,
+    batch_max_chars: int | None = None,
     on_progress: Callable[[PilotProgress], None] | None = None,
 ) -> PilotResult:
     """Compare active vs candidate prompts on a pilot set (temperature forced to 0).
@@ -104,11 +107,18 @@ def run_pilot(
     ``mode="classifier"`` runs single-pass ``classify()`` only for both prompts
     (no evaluator). Writes ``metrics.json`` and ``predictions.jsonl`` under
     ``output_dir`` (default ``runs/_pilot/<stamp>/``).
+
+    ``batch_size`` / ``batch_max_chars`` group pull requests into multi-PR LLM
+    calls (same packing rules as the classify stage).
     """
     if max_iterations < 1:
         raise ValueError("max_iterations must be >= 1")
     if mode not in ("classifier", "full"):
         raise ValueError("mode must be 'classifier' or 'full'")
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+    if batch_max_chars is not None and batch_max_chars < 1:
+        raise ValueError("batch_max_chars must be >= 1")
 
     loaded = pilot_set if isinstance(pilot_set, PilotSet) else load_pilot_set(pilot_set)
     active_id = (active or "default").strip() or "default"
@@ -139,6 +149,8 @@ def run_pilot(
             system_prompt=active_body,
             factory=zero_factory,
             emit=sink,
+            batch_size=batch_size,
+            batch_max_chars=batch_max_chars,
             on_item=lambda done, total: report("active", done, total),
         )
         candidate_preds = _run_single_pass(
@@ -146,6 +158,8 @@ def run_pilot(
             system_prompt=candidate_body,
             factory=zero_factory,
             emit=sink,
+            batch_size=batch_size,
+            batch_max_chars=batch_max_chars,
             on_item=lambda done, total: report("candidate", done, total),
         )
         single_preds = dict(candidate_preds)
@@ -158,6 +172,8 @@ def run_pilot(
             max_iterations=max_iterations,
             run_dir=out / "active",
             emit=sink,
+            batch_size=batch_size,
+            batch_max_chars=batch_max_chars,
             on_item=lambda done, total: report("active", done, total),
         )
         candidate_preds = _run_full_loop(
@@ -168,6 +184,8 @@ def run_pilot(
             max_iterations=max_iterations,
             run_dir=out / "candidate",
             emit=sink,
+            batch_size=batch_size,
+            batch_max_chars=batch_max_chars,
             on_item=lambda done, total: report("candidate", done, total),
         )
         single_preds = _run_single_pass(
@@ -175,6 +193,8 @@ def run_pilot(
             system_prompt=candidate_body,
             factory=zero_factory,
             emit=sink,
+            batch_size=batch_size,
+            batch_max_chars=batch_max_chars,
             on_item=lambda done, total: report("candidate_single_pass", done, total),
         )
 
@@ -282,6 +302,8 @@ def _run_full_loop(
     max_iterations: int,
     run_dir: Path,
     emit: Callable[[Event], None],
+    batch_size: int = 1,
+    batch_max_chars: int | None = None,
     on_item: Callable[[int, int], None] | None = None,
 ) -> dict[str, bool]:
     """Drive :class:`ClassifyStage` / ``_review`` with the selected classifier prompt."""
@@ -291,16 +313,27 @@ def _run_full_loop(
     if on_item is not None:
         on_item(0, total)
 
-    def sink(event: Event) -> None:
-        emit(event)
-        if on_item is None or not isinstance(event, ClassifyProgress):
-            return
-        if event.kind != "pull":
-            return
-        # 1-based index of the PR currently being classified.
-        on_item(min(event.index, event.total), event.total)
+    finished = 0
 
-    stage = ClassifyStage(max_iterations, factory, batch_size=1)
+    def sink(event: Event) -> None:
+        nonlocal finished
+        emit(event)
+        if on_item is None:
+            return
+        if isinstance(event, LoopFinished):
+            finished += 1
+            on_item(min(finished, total), total)
+            return
+        if isinstance(event, ClassifyProgress) and event.kind == "pull":
+            # 1-based index of the PR currently being classified.
+            on_item(min(event.index, event.total), event.total)
+
+    stage = ClassifyStage(
+        max_iterations,
+        factory,
+        batch_size=batch_size,
+        batch_max_chars=batch_max_chars,
+    )
     ctx = RunContext(run_dir, sink)
     pulls = [item.pr for item in pilot_set.items]
     payloads = stage.run(ctx, pulls)
@@ -320,16 +353,78 @@ def _run_single_pass(
     system_prompt: str,
     factory: LLMFactory,
     emit: Callable[[Event], None],
+    batch_size: int = 1,
+    batch_max_chars: int | None = None,
     on_item: Callable[[int, int], None] | None = None,
 ) -> dict[str, bool]:
-    """One ``classify()`` call per PR — no evaluator."""
-    predictions: dict[str, bool] = {}
+    """Classify each PR once — no evaluator. Batches when ``batch_size`` > 1."""
     total = len(pilot_set.items)
     if on_item is not None:
         on_item(0, total)
-    for index, item in enumerate(pilot_set.items, start=1):
+    if batch_size <= 1:
+        return _run_single_pass_solo(
+            pilot_set.items,
+            system_prompt=system_prompt,
+            factory=factory,
+            emit=emit,
+            on_item=on_item,
+            total=total,
+        )
+
+    predictions: dict[str, bool] = {}
+    done = 0
+    for group in _pilot_groups(pilot_set.items, batch_size, batch_max_chars):
+        if len(group) == 1:
+            chunk = _run_single_pass_solo(
+                group,
+                system_prompt=system_prompt,
+                factory=factory,
+                emit=emit,
+                on_item=None,
+                total=total,
+                start_index=done,
+            )
+        else:
+            chunk = _run_single_pass_batch(
+                group,
+                system_prompt=system_prompt,
+                factory=factory,
+                emit=emit,
+            )
+            missing = [item for item in group if item.pr.context.pr_id not in chunk]
+            if missing:
+                chunk.update(
+                    _run_single_pass_solo(
+                        missing,
+                        system_prompt=system_prompt,
+                        factory=factory,
+                        emit=emit,
+                        on_item=None,
+                        total=total,
+                        start_index=done,
+                    )
+                )
+        predictions.update(chunk)
+        done += len(group)
         if on_item is not None:
-            on_item(index, total)
+            on_item(min(done, total), total)
+    return predictions
+
+
+def _run_single_pass_solo(
+    items: list[PilotItem],
+    *,
+    system_prompt: str,
+    factory: LLMFactory,
+    emit: Callable[[Event], None],
+    on_item: Callable[[int, int], None] | None,
+    total: int,
+    start_index: int = 0,
+) -> dict[str, bool]:
+    predictions: dict[str, bool] = {}
+    for offset, item in enumerate(items, start=1):
+        if on_item is not None:
+            on_item(start_index + offset, total)
         pr_id = item.pr.context.pr_id
         try:
             result = classify(
@@ -343,6 +438,58 @@ def _run_single_pass(
         else:
             predictions[pr_id] = result.has_security_discussion
     return predictions
+
+
+def _run_single_pass_batch(
+    items: list[PilotItem],
+    *,
+    system_prompt: str,
+    factory: LLMFactory,
+    emit: Callable[[Event], None],
+) -> dict[str, bool]:
+    messages = build_batch_messages(
+        [(item.pr, None, None) for item in items],
+        system_prompt=system_prompt,
+    )
+    try:
+        response = factory.generate("classifier", messages, schema=BatchClassification)
+    except _CAUGHT:
+        return {}
+    parsed = response.parsed
+    if not isinstance(parsed, BatchClassification):
+        return {}
+    wanted = {item.pr.context.pr_id for item in items}
+    predictions: dict[str, bool] = {}
+    for result in parsed.results:
+        if result.pr_id not in wanted or result.pr_id in predictions:
+            continue
+        predictions[result.pr_id] = result.has_security_discussion
+        quote = result.evidence[0].quote if result.evidence else None
+        emit(
+            ClassificationAttempt(
+                pr_id=result.pr_id,
+                has_security_discussion=result.has_security_discussion,
+                quote=quote,
+            )
+        )
+    return predictions
+
+
+def _pilot_groups(
+    items: list[PilotItem],
+    batch_size: int,
+    batch_max_chars: int | None,
+) -> list[list[PilotItem]]:
+    packed = _pack(
+        [
+            (item.pr.context.pr_id, len(item.pr.model_dump_json(indent=2)))
+            for item in items
+        ],
+        batch_size,
+        batch_max_chars,
+    )
+    by_id = {item.pr.context.pr_id: item for item in items}
+    return [[by_id[pr_id] for pr_id in group] for group in packed]
 
 
 def _write_prompt_config(run_dir: Path, *, classifier: str, registry_dir: Path) -> None:
