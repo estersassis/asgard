@@ -20,6 +20,7 @@ from asgard.prompts.classifier import (
 from asgard.prompts.classifier import (
     build_messages as build_classifier_messages,
 )
+from asgard.prompts.classifier import resolve_batch_system_prompt as resolve_classifier_batch
 from asgard.prompts.evaluator import (
     BATCH_SYSTEM_PROMPT as EVALUATOR_BATCH_PROMPT,
 )
@@ -32,6 +33,7 @@ from asgard.prompts.evaluator import (
 from asgard.prompts.evaluator import (
     build_messages as build_evaluator_messages,
 )
+from asgard.prompts.evaluator import resolve_batch_system_prompt as resolve_evaluator_batch
 
 _CRITERIA = ("decision", "evidence", "completeness", "rationale")
 
@@ -83,6 +85,23 @@ def test_single_pr_prompts_stay_on_their_own_system_text() -> None:
     assert "results" not in EVALUATOR_PROMPT
     assert classifier[0].content != CLASSIFIER_BATCH_PROMPT
     assert evaluator[0].content != EVALUATOR_BATCH_PROMPT
+
+
+def test_resolve_batch_system_prompt_maps_solo_builtin_and_custom() -> None:
+    assert resolve_classifier_batch(None) == CLASSIFIER_BATCH_PROMPT
+    assert resolve_classifier_batch(CLASSIFIER_PROMPT) == CLASSIFIER_BATCH_PROMPT
+    custom = "Decide using only CVE mentions.\nReturn JSON with has_security_discussion."
+    adapted = resolve_classifier_batch(custom)
+    assert "CVE mentions" in adapted
+    assert '"results"' in adapted
+    assert resolve_evaluator_batch(EVALUATOR_PROMPT) == EVALUATOR_BATCH_PROMPT
+
+
+def test_classifier_batch_honors_system_prompt_override() -> None:
+    pull = _pull("42", "The login handler allows an authentication bypass.")
+    custom = CLASSIFIER_BATCH_PROMPT + "\nEXTRA RULE"
+    messages = build_classifier_batch([(pull, None, None)], system_prompt=custom)
+    assert messages[0].content == custom
 
 
 def test_classifier_batch_asks_for_an_independent_judgment_per_pr() -> None:

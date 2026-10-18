@@ -754,7 +754,12 @@ def _redact(message: str, secrets: list[str]) -> str:
 
 
 def _read(path: Path) -> dict[str, Any]:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ConfigError(f"settings file not found: {path}") from None
+    except OSError as exc:
+        raise ConfigError(f"cannot read settings file: {path}: {exc.strerror}") from None
     if path.suffix == ".json":
         data = json.loads(text)
     elif path.suffix == ".toml":

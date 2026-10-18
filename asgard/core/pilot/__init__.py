@@ -7,7 +7,7 @@ from asgard.core.pilot.gate import (
     evaluate_gates,
     promote,
 )
-from asgard.core.pilot.runner import PilotPrediction, PilotResult, run_pilot
+from asgard.core.pilot.runner import PilotPrediction, PilotProgress, PilotResult, run_pilot
 from asgard.core.pilot.set import PilotItem, PilotSet, load_pilot_set
 from asgard.core.pilot.statistics import (
     Confusion,
@@ -24,6 +24,7 @@ __all__ = [
     "PilotItem",
     "PilotMetrics",
     "PilotPrediction",
+    "PilotProgress",
     "PilotResult",
     "PilotSet",
     "PilotStatistics",

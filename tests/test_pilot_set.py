@@ -25,6 +25,20 @@ def test_bundled_example_loads_with_valid_prs() -> None:
         assert item.pr.schema_version == "1"
 
 
+def test_bundled_binary_v2_loads_with_valid_prs() -> None:
+    assert "binary_v2" in BUNDLED_SETS
+    pilot = load_pilot_set("binary_v2")
+    assert isinstance(pilot, PilotSet)
+    assert pilot.id == "binary_v2"
+    assert len(pilot.items) == 15
+    assert sum(1 for item in pilot.items if item.label) == 7
+    assert sum(1 for item in pilot.items if not item.label) == 8
+    for item in pilot.items:
+        assert isinstance(item.pr, NormalizedPullRequest)
+        assert item.pr.context.pr_id.startswith("pilot-")
+        assert item.pr.schema_version == "1"
+
+
 def test_load_pilot_set_from_path(tmp_path: Path) -> None:
     bundled = load_pilot_set("example")
     path = tmp_path / "custom.json"

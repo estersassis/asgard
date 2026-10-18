@@ -37,13 +37,21 @@ class _RecordingFake:
         if system.startswith("You review"):
             self.evaluator_calls += 1
             return LLMResponse(
-                text=_approve(),
+                text=_batch_approve(messages) if _is_batch_user(messages) else _approve(),
                 input_tokens=3,
                 output_tokens=5,
                 latency_s=0.01,
                 model="fake",
             )
         self.classifier_calls += 1
+        if _is_batch_user(messages):
+            return LLMResponse(
+                text=_batch_classification(messages),
+                input_tokens=3,
+                output_tokens=5,
+                latency_s=0.01,
+                model="fake",
+            )
         security = _wants_security(messages)
         return LLMResponse(
             text=_classification(security, messages),
@@ -83,6 +91,51 @@ def _classification(security: bool, messages: list[Message]) -> str:
     return json.dumps(body)
 
 
+def _is_batch_user(messages: list[Message]) -> bool:
+    if len(messages) < 2:
+        return False
+    user = messages[1].content
+    return user.startswith("Judge each pull request independently") or user.startswith(
+        "Judge each pair independently"
+    )
+
+
+def _batch_payload(messages: list[Message]) -> list[dict[str, object]]:
+    user = messages[1].content
+    raw = user.split("\n\n", 1)[1]
+    payload = json.loads(raw)
+    assert isinstance(payload, list)
+    return payload
+
+
+def _batch_classification(messages: list[Message]) -> str:
+    results: list[dict[str, object]] = []
+    for item in _batch_payload(messages):
+        pr_id = str(item["pr_id"])
+        blob = json.dumps(item).lower()
+        security = "authentication bypass" in blob or "xss" in blob
+        if security:
+            quote = "authentication bypass" if "authentication bypass" in blob else "XSS"
+            results.append(
+                {
+                    "pr_id": pr_id,
+                    "has_security_discussion": True,
+                    "evidence": [{"quote": quote, "location": "description"}],
+                    "rationale": "security discussion present",
+                }
+            )
+        else:
+            results.append(
+                {
+                    "pr_id": pr_id,
+                    "has_security_discussion": False,
+                    "evidence": [],
+                    "rationale": "no security discussion",
+                }
+            )
+    return json.dumps({"results": results})
+
+
 def _approve() -> str:
     return json.dumps(
         {
@@ -96,6 +149,17 @@ def _approve() -> str:
                 for criterion in _CRITERIA
             ],
             "feedback": "",
+        }
+    )
+
+
+def _batch_approve(messages: list[Message]) -> str:
+    approved = json.loads(_approve())
+    return json.dumps(
+        {
+            "results": [
+                {"pr_id": str(item["pr_id"]), **approved} for item in _batch_payload(messages)
+            ]
         }
     )
 
@@ -199,8 +263,105 @@ def test_single_pass_skips_evaluator(tmp_path: Path) -> None:
     # adds one classify per PR and never calls the evaluator.
     assert handler.classifier_calls == n * 3
     assert handler.evaluator_calls == n * 2
+    assert result.mode == "full"
     assert result.candidate_single_pass.confusion.n == n
     assert (tmp_path / "single" / "candidate" / "classify" / "output.json").is_file()
+
+
+def test_classifier_mode_reports_progress(tmp_path: Path) -> None:
+    pilot = load_pilot_set("example")
+    slim = PilotSet(
+        id="slim",
+        name="slim",
+        items=[pilot.items[0], pilot.items[2]],
+    )
+    registry = _registry(tmp_path)
+    versions = [v.id for v in registry.list("classifier") if v.id != "default"]
+    candidate_id = next(v for v in versions if v.startswith("candidate-pilot"))
+
+    updates: list[str] = []
+    run_pilot(
+        slim,
+        candidate=candidate_id,
+        active="default",
+        factory=_factory(_RecordingFake()),
+        registry_dir=registry.root,
+        output_dir=tmp_path / "progress",
+        mode="classifier",
+        on_progress=lambda progress: updates.append(progress.message),
+    )
+
+    assert updates
+    assert any("Active prompt" in message for message in updates)
+    assert any("Candidate prompt" in message for message in updates)
+    assert any("2/2 PRs" in message for message in updates)
+    assert any("overall 4/4" in message for message in updates)
+    assert not any("/5" in message for message in updates)
+
+
+def test_classifier_mode_batches_pull_requests(tmp_path: Path) -> None:
+    pilot = load_pilot_set("example")
+    slim = PilotSet(
+        id="slim",
+        name="slim",
+        items=[pilot.items[0], pilot.items[2]],
+    )
+    registry = _registry(tmp_path)
+    versions = [v.id for v in registry.list("classifier") if v.id != "default"]
+    candidate_id = next(v for v in versions if v.startswith("candidate-pilot"))
+
+    handler = _RecordingFake()
+    result = run_pilot(
+        slim,
+        candidate=candidate_id,
+        active="default",
+        factory=_factory(handler),
+        registry_dir=registry.root,
+        output_dir=tmp_path / "batched",
+        mode="classifier",
+        batch_size=2,
+    )
+
+    # One batched classify call per phase (active + candidate).
+    assert handler.classifier_calls == 2
+    assert handler.evaluator_calls == 0
+    assert result.mode == "classifier"
+    assert result.candidate.confusion.n == 2
+    assert any(
+        call[1].content.startswith("Judge each pull request independently")
+        for call in handler.calls
+    )
+
+
+def test_classifier_mode_skips_full_loop(tmp_path: Path) -> None:
+    pilot = load_pilot_set("example")
+    slim = PilotSet(
+        id="slim",
+        name="slim",
+        items=[pilot.items[0], pilot.items[2]],
+    )
+    registry = _registry(tmp_path)
+    versions = [v.id for v in registry.list("classifier") if v.id != "default"]
+    candidate_id = next(v for v in versions if v.startswith("candidate-pilot"))
+
+    handler = _RecordingFake()
+    result = run_pilot(
+        slim,
+        candidate=candidate_id,
+        active="default",
+        factory=_factory(handler),
+        registry_dir=registry.root,
+        output_dir=tmp_path / "classifier-only",
+        mode="classifier",
+    )
+
+    n = len(slim.items)
+    assert result.mode == "classifier"
+    assert handler.classifier_calls == n * 2
+    assert handler.evaluator_calls == 0
+    assert result.candidate == result.candidate_single_pass
+    assert not (tmp_path / "classifier-only" / "active").exists()
+    assert not (tmp_path / "classifier-only" / "candidate").exists()
 
 
 def test_unknown_candidate_raises(tmp_path: Path) -> None:

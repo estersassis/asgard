@@ -8,32 +8,30 @@ from asgard.core.normalization import NormalizedPullRequest
 from asgard.providers.models import Message
 
 SYSTEM_PROMPT = """\
-You review one classification of a pull request.
+You review one classification of a pull request. Judge it; do not reclassify.
 
-The classification says whether the pull request contains a security discussion.
-Judge that answer. Do not write a new classification.
+Use the classifier's definition: a security discussion exists only when the pull
+request's text states a security risk or a protection against one (a vulnerability
+or attack, an access control or authentication flaw, exposed secrets, unsafe input
+handling, an insecure default, or a dependency update made for a security reason).
+Security-related words or components without a stated risk do not count.
 
-Judge these four criteria, in this order:
-- decision: is has_security_discussion correct for this pull request?
-- evidence: do the quotes show a security discussion, or were they taken out of context?
-- completeness: when has_security_discussion is false, did the classifier miss a
-  security discussion?
-- rationale: is the rationale compatible with the evidence, and does it avoid inventing facts?
+Check these criteria in order:
+1. decision: is has_security_discussion correct under that definition?
+2. evidence: if true, does each quote state the risk when read in its context?
+   A lone keyword fails. If false, this passes when evidence is [].
+3. completeness: if false, does the title, description, discussion or any review
+   comment state a risk the classifier missed? If true, this passes.
+4. rationale: does it match the evidence and the text without inventing facts?
 
-Return JSON with exactly these fields:
-- verdict: APPROVE or REVISE
-- findings: four objects, one for each criterion, in this order:
-  decision, evidence, completeness, rationale
-- feedback: guidance for the classifier
+Fail a criterion only for a concrete problem you can point to in the text.
+Doubt alone is not a failure.
 
-Each finding has:
-- criterion: decision, evidence, completeness, or rationale
-- passed: true or false
-- explanation: a non-empty justification
-
-APPROVE is valid only when every finding passed.
-REVISE requires at least one finding with passed false, and feedback must be non-empty.
-When the verdict is APPROVE, feedback is an empty string.
+Return JSON with exactly: verdict (APPROVE or REVISE), findings (four objects in
+the order above, each with criterion, passed, explanation), and feedback.
+APPROVE only when all four pass, with feedback "". Otherwise REVISE, with feedback
+that names what to fix and where (location). If the decision is wrong, feedback
+must start with "The decision is wrong:".
 """
 
 
@@ -61,47 +59,64 @@ def build_messages(
 
 
 BATCH_SYSTEM_PROMPT = """\
-You review classifications of several pull requests.
+You review classifications of several pull requests. Judge each one on its own;
+do not reclassify, and never use one pull request or classification when judging
+another.
 
-Each classification says whether that pull request contains a security discussion.
-Judge each answer on its own. Do not write a new classification.
-Do not use one pull request, or one classification, when judging another.
+Use the classifier's definition: a security discussion exists only when the pull
+request's text states a security risk or a protection against one (a vulnerability
+or attack, an access control or authentication flaw, exposed secrets, unsafe input
+handling, an insecure default, or a dependency update made for a security reason).
+Security-related words or components without a stated risk do not count.
 
-Judge these four criteria, in this order, for each pull request:
-- decision: is has_security_discussion correct for this pull request?
-- evidence: do the quotes show a security discussion, or were they taken out of context?
-- completeness: when has_security_discussion is false, did the classifier miss a
-  security discussion?
-- rationale: is the rationale compatible with the evidence, and does it avoid inventing facts?
+For each pull request, check these criteria in order:
+1. decision: is has_security_discussion correct under that definition?
+2. evidence: if true, does each quote state the risk when read in its context?
+   A lone keyword fails. If false, this passes when evidence is [].
+3. completeness: if false, does the title, description, discussion or any review
+   comment state a risk the classifier missed? If true, this passes.
+4. rationale: does it match the evidence and the text without inventing facts?
 
-Return JSON with exactly this field:
-- results: one object per pull request, each with pr_id, verdict, findings,
-  and feedback
+Fail a criterion only for a concrete problem you can point to in that pull
+request's text. Doubt alone is not a failure.
 
-pr_id is the id of that pull request.
-verdict is APPROVE or REVISE.
-findings has four objects, one for each criterion, in this order:
-decision, evidence, completeness, rationale.
-feedback is guidance for the classifier about this pull request only.
-
-Each finding has:
-- criterion: decision, evidence, completeness, or rationale
-- passed: true or false
-- explanation: a non-empty justification
-
-APPROVE is valid only when every finding passed.
-REVISE requires at least one finding with passed false, and feedback must be non-empty.
-When the verdict is APPROVE, feedback is an empty string.
+Return JSON: {"results": [{"pr_id", "verdict", "findings", "feedback"}]}, one
+object per pull request. verdict is APPROVE or REVISE. findings has four objects
+in the order above, each with criterion, passed, explanation. APPROVE only when
+all four pass, with feedback "". Otherwise REVISE, with feedback about this pull
+request only, naming what to fix and where (location). If the decision is wrong,
+feedback must start with "The decision is wrong:".
 """
+
+
+def resolve_batch_system_prompt(system_prompt: str | None = None) -> str:
+    """Map a solo/registry prompt onto a batch-capable evaluator system prompt."""
+    if system_prompt is None or system_prompt.strip() == SYSTEM_PROMPT.strip():
+        return BATCH_SYSTEM_PROMPT
+    if '"results"' in system_prompt or "results\":" in system_prompt:
+        return system_prompt
+    return (
+        "You are reviewing classifications of several pull requests in one call. "
+        "Judge each on its own; do not reclassify, and never use one pull request "
+        "or classification when judging another.\n\n"
+        f"{system_prompt.strip()}\n\n"
+        "For this call, ignore any single-PR-only return format above and "
+        'return JSON: {"results": [{"pr_id", "verdict", "findings", "feedback"}]}, '
+        "one object per pull request."
+    )
 
 
 def build_batch_messages(
     items: Sequence[tuple[NormalizedPullRequest, Classification]],
+    *,
+    system_prompt: str | None = None,
 ) -> list[Message]:
     """Return the batch system prompt and one user message for these pairs.
 
     Each item is one pull request and the classification to review.
     Pairs are judged independently.
+    ``system_prompt`` overrides the built-in batch prompt when set (solo
+    prompts are adapted via :func:`resolve_batch_system_prompt`).
     """
     if not items:
         raise ValueError("a batch requires at least one pull request")
@@ -121,6 +136,6 @@ def build_batch_messages(
         f"{json.dumps(payload, indent=2)}"
     )
     return [
-        Message(role="system", content=BATCH_SYSTEM_PROMPT),
+        Message(role="system", content=resolve_batch_system_prompt(system_prompt)),
         Message(role="user", content=content),
     ]

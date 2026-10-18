@@ -66,6 +66,36 @@ def clear_from(run_dir: Path, stage: str) -> None:
         prompt_path.write_text(prompt, encoding="utf-8")
 
 
+def _is_retryable_status(status: object) -> bool:
+    if not isinstance(status, str) or not status:
+        return False
+    return status == "error" or status.startswith("unresolved_")
+
+
+def classify_retryable_ids(run_dir: Path) -> list[str]:
+    """Return classify checkpoint ids that can be retried (error or unresolved)."""
+    path = run_dir / "classify" / "items.jsonl"
+    if not path.is_file():
+        return []
+    found: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        item_id = row.get("id")
+        payload = row.get("payload")
+        if not isinstance(item_id, str) or not item_id:
+            continue
+        if isinstance(payload, dict) and _is_retryable_status(payload.get("status")):
+            found.append(item_id)
+    return found
+
+
 def classify_error_ids(run_dir: Path) -> list[str]:
     """Return classify checkpoint ids whose payload status is ``error``."""
     path = run_dir / "classify" / "items.jsonl"

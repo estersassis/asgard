@@ -265,7 +265,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     pilot_run.add_argument(
         "--pilot-set",
-        default="example",
+        default="binary_v2",
         help=bundled_pilot_set_help(),
     )
     pilot_run.add_argument("--config", type=Path, help="run settings TOML/JSON (LLM + prompts)")

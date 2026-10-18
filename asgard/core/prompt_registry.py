@@ -133,6 +133,25 @@ def builtin_body(role: str) -> str:
     return SYSTEM_PROMPT
 
 
+def adapt_prompt_body(role: str, body: str, *, batch: bool) -> str:
+    """Return ``body`` as shown/used for solo or batch calls.
+
+    For classifier/evaluator, ``batch=True`` maps the solo built-in onto the
+    batch built-in (or wraps a custom solo prompt with the batch JSON envelope).
+    """
+    if not batch:
+        return body
+    if role == "classifier":
+        from asgard.prompts.classifier import resolve_batch_system_prompt
+
+        return resolve_batch_system_prompt(body)
+    if role == "evaluator":
+        from asgard.prompts.evaluator import resolve_batch_system_prompt
+
+        return resolve_batch_system_prompt(body)
+    return body
+
+
 def content_sha256(body: str) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 

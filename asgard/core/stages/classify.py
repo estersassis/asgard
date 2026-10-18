@@ -242,7 +242,8 @@ class ClassifyStage(Stage):
         response, lines = self._generate(
             "classifier",
             classifier_batch_messages(
-                [(review.pull, review.previous, review.feedback) for review in group]
+                [(review.pull, review.previous, review.feedback) for review in group],
+                system_prompt=self._classifier_prompt,
             ),
             BatchClassification,
             iteration=group[0].iteration,
@@ -343,7 +344,7 @@ class ClassifyStage(Stage):
             pairs.append((review.pull, classification))
         response, lines = self._generate(
             "evaluator",
-            evaluator_batch_messages(pairs),
+            evaluator_batch_messages(pairs, system_prompt=self._evaluator_prompt),
             BatchEvaluation,
             iteration=group[0].iteration,
             pr_ids=pr_ids,

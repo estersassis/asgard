@@ -10,7 +10,7 @@ import queue
 import tomllib
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
@@ -27,8 +27,18 @@ from asgard.core.config import (
     load_run,
     probe_run,
 )
+from asgard.core.pilot.gate import GateThresholds, PromoteError
+from asgard.core.pilot.set import PilotSet
 from asgard.core.pipeline import PIPELINE
+from asgard.core.prompt_registry import (
+    ROLES,
+    PromptRegistry,
+    adapt_prompt_body,
+    default_registry_root,
+)
 from asgard.prompts.synthesizer import SYSTEM_PROMPT
+from asgard.ui.pilot import PilotSession, PilotStore, promote_from_api
+from asgard.ui.runs import resolve_config_path
 from asgard.ui.session import RunSession, SessionStore
 
 # Allowlisted run-dir files served by the UI (relative to the run output dir).
@@ -103,6 +113,40 @@ class PromptBody(BaseModel):
     text: str
 
 
+class PromptSaveBody(BaseModel):
+    name: str
+    body: str
+    notes: str = ""
+    registry_dir: Path | None = None
+
+
+class PilotThresholdsBody(BaseModel):
+    f1_min: float | None = 0.90
+    kappa_min: float | None = 0.80
+    accuracy_min: float | None = None
+    precision_min: float | None = None
+    recall_min: float | None = None
+
+
+class StartPilotBody(BaseModel):
+    candidate: str
+    active: str | None = None
+    pilot_set: str = "binary_v2"
+    config: Path | None = None
+    thresholds: PilotThresholdsBody | None = None
+    registry_dir: Path | None = None
+    mode: Literal["classifier", "full"] = "classifier"
+    batch_size: int | None = Field(default=None, ge=1)
+    batch_max_chars: int | None = Field(default=None, ge=1)
+
+
+class PromotePilotBody(BaseModel):
+    candidate: str
+    config: Path
+    from_result: Path | None = None
+    role: str = "classifier"
+
+
 def create_app(
     *,
     opener: Any = None,
@@ -110,9 +154,11 @@ def create_app(
     dotenv: Path | None = Path(".env"),
 ) -> FastAPI:
     store = SessionStore(opener=opener, handlers=handlers, dotenv=dotenv)
+    pilots = PilotStore(handlers=handlers, dotenv=dotenv)
     templates = Jinja2Templates(directory=str(_UI_ROOT / "templates"))
     app = FastAPI(title="ASGARD")
     app.state.store = store
+    app.state.pilots = pilots
     app.mount("/static", StaticFiles(directory=str(_UI_ROOT / "static")), name="static")
 
     def _theme(request: Request) -> str:
@@ -142,6 +188,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="run not found")
         return session
 
+    def _pilot_or_404(run_id: str) -> PilotSession:
+        session = pilots.get(run_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="pilot run not found")
+        return session
+
     def _run_file(
         session: RunSession,
         relative: str,
@@ -165,6 +217,13 @@ def create_app(
         if not path.is_relative_to(root):
             raise HTTPException(status_code=404, detail="file not found")
         return path
+
+    def _prompt_registry(registry_dir: Path | None = None) -> PromptRegistry:
+        return PromptRegistry(registry_dir or default_registry_root())
+
+    def _check_prompt_role(role: str) -> None:
+        if role not in ROLES:
+            raise HTTPException(status_code=400, detail=f"unknown prompt role: {role}")
 
     @app.get("/", response_class=HTMLResponse)
     @app.get("/setup", response_class=HTMLResponse, name="setup")
@@ -201,7 +260,11 @@ def create_app(
 
     @app.get("/forge", response_class=HTMLResponse, name="forge")
     async def forge(request: Request) -> HTMLResponse:
-        return _screen(request, "forge", "V", "Forge")
+        return templates.TemplateResponse(
+            request,
+            "forge.html",
+            _page(request, "forge"),
+        )
 
     @app.get("/api/setup/env")
     async def setup_env() -> dict[str, str]:
@@ -266,6 +329,185 @@ def create_app(
         data.pop("github_token", None)
         data.pop("keys", None)
         return data
+
+    @app.get("/api/prompts")
+    async def list_prompts(
+        role: str,
+        registry_dir: Path | None = None,
+    ) -> list[dict[str, Any]]:
+        _check_prompt_role(role)
+        versions = _prompt_registry(registry_dir).list(role)
+        return [
+            {
+                "id": version.id,
+                "name": version.name,
+                "sha256": version.sha256,
+                "created_at": version.created_at,
+                "notes": version.notes,
+            }
+            for version in versions
+        ]
+
+    @app.get("/api/prompts/active")
+    async def active_prompts(config: Path | None = None) -> dict[str, str]:
+        active = {
+            "classifier": "default",
+            "evaluator": "default",
+            "synthesizer": "default",
+        }
+        if config is None or config.suffix.lower() != ".toml":
+            return active
+        path = config.expanduser()
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="config not found")
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid config: {exc}") from exc
+        prompts = data.get("prompts")
+        if not isinstance(prompts, dict):
+            return active
+        for role in ROLES:
+            raw = prompts.get(role)
+            if raw is None:
+                continue
+            version_id = str(raw).strip()
+            if version_id:
+                active[role] = version_id
+        return active
+
+    @app.get("/api/prompts/{role}/{version_id}")
+    async def get_prompt(
+        role: str,
+        version_id: str,
+        registry_dir: Path | None = None,
+        batch: bool = False,
+    ) -> dict[str, Any]:
+        _check_prompt_role(role)
+        try:
+            version = _prompt_registry(registry_dir).get(role, version_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        payload = version.model_dump(mode="json")
+        payload["body"] = adapt_prompt_body(role, version.body, batch=batch)
+        payload["batch"] = batch
+        return payload
+
+    @app.post("/api/prompts/{role}")
+    async def save_prompt(role: str, body: PromptSaveBody) -> dict[str, Any]:
+        _check_prompt_role(role)
+        try:
+            version = _prompt_registry(body.registry_dir).save(
+                role,
+                name=body.name,
+                body=body.body,
+                notes=body.notes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return version.model_dump(mode="json")
+
+    @app.get("/api/pilot/sets")
+    async def list_pilot_sets() -> list[dict[str, Any]]:
+        return pilots.list_sets()
+
+    @app.post("/api/pilot/sets")
+    async def upload_pilot_set(body: PilotSet) -> dict[str, str]:
+        try:
+            return pilots.save_set(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/pilot/runs")
+    async def start_pilot_run(body: StartPilotBody) -> dict[str, str]:
+        candidate = body.candidate.strip()
+        if not candidate:
+            raise HTTPException(status_code=400, detail="candidate must not be empty")
+        if body.config is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "config path is required "
+                    "(asgard.toml or a run's config.json with llm settings)"
+                ),
+            )
+        try:
+            pilot_set = pilots.resolve_pilot_set(body.pilot_set)
+        except (ValueError, LookupError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        config_path = resolve_config_path(body.config)
+        thresholds = None
+        if body.thresholds is not None:
+            thresholds = GateThresholds.model_validate(body.thresholds.model_dump())
+        session = pilots.create()
+        try:
+            output_dir = session.start(
+                candidate=candidate,
+                active=body.active,
+                pilot_set=pilot_set,
+                config=config_path,
+                thresholds=thresholds,
+                registry_dir=body.registry_dir,
+                mode=body.mode,
+                batch_size=body.batch_size,
+                batch_max_chars=body.batch_max_chars,
+            )
+        except (ConfigError, LookupError, ValueError) as exc:
+            session.status = "error"
+            session.error = str(exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            session.status = "error"
+            session.error = str(exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        pilots.rekey(session, output_dir.name)
+        return {"id": session.id, "output_dir": str(output_dir)}
+
+    @app.get("/api/pilot/runs/{run_id}")
+    async def pilot_run_status(run_id: str) -> dict[str, Any]:
+        session = _pilot_or_404(run_id)
+        return {
+            "id": session.id,
+            "status": session.status,
+            "running": session.running,
+            "output_dir": str(session.output_dir) if session.output_dir else None,
+            "error": session.error,
+            "progress": session.progress_snapshot(),
+        }
+
+    @app.get("/api/pilot/runs/{run_id}/metrics")
+    async def pilot_run_metrics(run_id: str) -> dict[str, Any]:
+        session = _pilot_or_404(run_id)
+        if session.status == "running" or session.running:
+            raise HTTPException(status_code=404, detail="metrics not ready")
+        path = pilots.metrics_path(run_id)
+        if path is None:
+            if session.error:
+                raise HTTPException(status_code=400, detail=session.error)
+            raise HTTPException(status_code=404, detail="metrics not found")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=500, detail="invalid metrics.json") from exc
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail="invalid metrics.json")
+        return data
+
+    @app.post("/api/pilot/promote")
+    async def promote_pilot(body: PromotePilotBody) -> dict[str, Any]:
+        candidate = body.candidate.strip()
+        if not candidate:
+            raise HTTPException(status_code=400, detail="candidate must not be empty")
+        try:
+            return promote_from_api(
+                candidate=candidate,
+                config=resolve_config_path(body.config),
+                from_result=body.from_result,
+                role=body.role,
+                root=pilots.root,
+            )
+        except PromoteError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/runs")
     async def list_runs() -> list[dict[str, Any]]:

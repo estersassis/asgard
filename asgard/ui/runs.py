@@ -48,6 +48,30 @@ def resolve_run_dir(run_id: str, roots: tuple[Path, ...] | None = None) -> Path 
     return None
 
 
+def resolve_config_path(path: Path | str, roots: tuple[Path, ...] | None = None) -> Path:
+    """Resolve a settings path, including mistaken ``runs/{id}/config.json`` forms.
+
+    Accepts a real file path, or a path whose parent (or sole component) is a
+    stable run id ``{repo}--{stamp}`` — mapped via :func:`resolve_run_dir`.
+    """
+    candidate = Path(path)
+    if candidate.is_file():
+        return candidate
+
+    run_id: str | None = None
+    if candidate.name == "config.json":
+        run_id = candidate.parent.name
+    elif candidate.suffix == "" and "--" in candidate.name and len(candidate.parts) == 1:
+        run_id = candidate.name
+
+    if run_id:
+        run_dir = resolve_run_dir(run_id, roots=roots)
+        if run_dir is not None:
+            return run_dir / "config.json"
+
+    return candidate
+
+
 def discover_runs(roots: tuple[Path, ...] | None = None) -> list[dict[str, Any]]:
     """List run directories under the known roots, newest first."""
     found: list[dict[str, Any]] = []
