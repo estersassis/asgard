@@ -112,8 +112,8 @@ def _classifier_calls(handler: FakeHandler) -> list[list[Message]]:
     return [
         call
         for call in handler.calls
-        if call[0].content.startswith("Decide whether this pull request")
-        or call[0].content.startswith("For each pull request, decide whether")
+        if call[0].content.startswith("Decide whether one pull request")
+        or call[0].content.startswith("For each pull request in the list")
     ]
 
 
@@ -121,7 +121,7 @@ def _batch_classifier_calls(handler: FakeHandler) -> list[list[Message]]:
     return [
         call
         for call in _classifier_calls(handler)
-        if call[0].content.startswith("For each pull request, decide whether")
+        if call[0].content.startswith("For each pull request in the list")
     ]
 
 
@@ -129,7 +129,7 @@ def _solo_classifier_calls(handler: FakeHandler) -> list[list[Message]]:
     return [
         call
         for call in _classifier_calls(handler)
-        if call[0].content.startswith("Decide whether this pull request")
+        if call[0].content.startswith("Decide whether one pull request")
     ]
 
 

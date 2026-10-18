@@ -7,35 +7,34 @@ from asgard.core.normalization import NormalizedPullRequest
 from asgard.providers.models import Message
 
 SYSTEM_PROMPT = """\
-For each pull request, decide whether its own text contains a security discussion.
+Decide whether one pull request's own text contains a security discussion.
 
-Answer true only when the text states a security risk or a protection against one:
-a vulnerability or attack, an access control or authentication flaw, exposed secrets,
-unsafe input handling, an insecure default, or a dependency update made for a
-security reason.
+Answer true only when the text states a security risk or a protection against
+one: a vulnerability or attack, an access control or authentication flaw,
+exposed secrets, unsafe input handling, an insecure default, or a dependency
+update made for a security reason.
 
 Answer false when security-related words or components appear without a stated
-risk. Words like secure, token, hash, session, permission, sanitize or auth are not
-evidence by themselves. Test: does the text say what could go wrong for security,
-or what is being protected? If not, answer false.
+risk. Words like secure, token, hash, session, permission, sanitize or auth are
+not evidence by themselves. Test: does the text say what could go wrong for
+security, or what is being protected? If not, answer false. Do not infer a risk
+the text does not state.
 
-Judge each pull request independently, using only its title, description,
-general_discussion and code_review_threads. Do not infer a risk the text does not state.
-
-Evidence: each quote is a non-empty literal excerpt from the cited location in the
-same pull request, and must be the sentence that states the risk, not a lone keyword.
-Locations (zero-based, per pull request): title, description, general_discussion[i],
+Read the title, description, general_discussion and code_review_threads.
+Evidence: each quote is a non-empty literal excerpt from the cited location, and
+must be the sentence that states the risk, not a lone keyword. Locations
+(zero-based): title, description, general_discussion[i],
 code_review_threads[j].comments[k].
 
-Return JSON: {"results": [{"pr_id", "has_security_discussion", "evidence":
-[{"quote", "location"}], "rationale"}]}. If true, evidence has at least one item;
-if false, evidence is []. The rationale is one sentence naming the risk, or saying
-why there is none.
+Return JSON: {"has_security_discussion", "evidence": [{"quote", "location"}],
+"rationale"}. If true, evidence has at least one item; if false, evidence is [].
+The rationale is one sentence naming the risk, or saying why there is none.
 
-Revision: if an item includes a previous answer and evaluator feedback, revise only
-that pull request. The feedback is not pull request text. Change the decision only
-if the feedback says it is wrong; otherwise fix only the evidence with a new literal
-quote or a corrected location, never the rejected evidence unchanged.
+Revision: your previous answer and evaluator feedback may follow the pull
+request. The feedback is not pull request text. Change the decision only if the
+feedback starts with "The decision is wrong:"; otherwise fix only the evidence
+with a new literal quote or a corrected location, never the rejected evidence
+unchanged.
 """
 
 
