@@ -149,6 +149,11 @@ class RunSession:
             if legacy.is_file():
                 legacy.unlink()
         clear_from(self.output_dir, stage)
+        # clear_from keeps map.json for resume-after-reduce-failure; regenerate
+        # must re-run map so edited map prompts take effect.
+        map_path = self.output_dir / "synthesize" / "map.json"
+        if map_path.is_file():
+            map_path.unlink()
         return self.start(
             config_path=self.output_dir / "config.json",
             start=stage,
