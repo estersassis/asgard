@@ -20,7 +20,9 @@ from asgard.core.stage import CancelledError
 from asgard.ui.runs import discover_runs, resolve_run_dir, stable_run_id
 from asgard.ui.sink import UISink
 
-_PROMPT = "system_prompt.txt"
+_MAP_PROMPT = "map_prompt.txt"
+_REDUCE_PROMPT = "reduce_prompt.txt"
+_LEGACY_PROMPT = "system_prompt.txt"
 
 
 class RunSession:
@@ -117,17 +119,35 @@ class RunSession:
             start=from_stage,
         )
 
-    def regenerate_from(self, stage: str, *, prompt: str | None = None) -> Path:
-        """Clear ``stage`` and later outputs, then resume from that stage."""
+    def regenerate_from(
+        self,
+        stage: str,
+        *,
+        prompt: str | None = None,
+        map_prompt: str | None = None,
+        reduce_prompt: str | None = None,
+    ) -> Path:
+        """Clear ``stage`` and later outputs, then resume from that stage.
+
+        ``prompt`` is a legacy alias for ``reduce_prompt``.
+        """
         if stage not in PIPELINE:
             raise ValueError(f"unknown stage: {stage}")
         if self.output_dir is None:
             raise RuntimeError("no run to resume")
         self.join()
-        if prompt is not None:
-            path = self.output_dir / "synthesize" / _PROMPT
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(prompt, encoding="utf-8")
+        if reduce_prompt is None:
+            reduce_prompt = prompt
+        synthesize = self.output_dir / "synthesize"
+        if map_prompt is not None or reduce_prompt is not None:
+            synthesize.mkdir(parents=True, exist_ok=True)
+        if map_prompt is not None:
+            (synthesize / _MAP_PROMPT).write_text(map_prompt, encoding="utf-8")
+        if reduce_prompt is not None:
+            (synthesize / _REDUCE_PROMPT).write_text(reduce_prompt, encoding="utf-8")
+            legacy = synthesize / _LEGACY_PROMPT
+            if legacy.is_file():
+                legacy.unlink()
         clear_from(self.output_dir, stage)
         return self.start(
             config_path=self.output_dir / "config.json",

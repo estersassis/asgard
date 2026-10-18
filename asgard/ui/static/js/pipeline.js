@@ -204,6 +204,10 @@
       case "StageStarted":
         stage = state.stages[event.stage];
         if (!stage) break;
+        // Drop stale errors from earlier failed attempts of this stage.
+        state.errors = state.errors.filter(function (err) {
+          return err.stage !== event.stage;
+        });
         stage.state = "running";
         stage.total = typeof event.total === "number" ? event.total : null;
         stage.count = 0;
@@ -223,6 +227,10 @@
         stage.state = event.skipped ? "skipped" : "done";
         if (event.at) stage.endedAt = event.at;
         if (!stage.startedAt && event.at) stage.startedAt = event.at;
+        // A finished stage supersedes its prior Error events in the log.
+        state.errors = state.errors.filter(function (err) {
+          return err.stage !== event.stage;
+        });
         if (event.stage === "prefilter" && !event.skipped && !state.prefilterOff) {
           fetchRemoved();
         }

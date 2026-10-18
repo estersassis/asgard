@@ -31,7 +31,12 @@ PIPELINE = (
     "bundle",
 )
 
-_PROMPT = "system_prompt.txt"
+_SYNTHESIZE_PROMPTS = (
+    "map_prompt.txt",
+    "reduce_prompt.txt",
+    "system_prompt.txt",  # legacy reduce override
+)
+_SYNTHESIZE_KEEP = _SYNTHESIZE_PROMPTS + ("map.json",)
 _ROOT = {
     "security_md": ("SECURITY.md",),
     "bundle": ("manifest.json",),
@@ -41,18 +46,21 @@ _ROOT = {
 def clear_from(run_dir: Path, stage: str) -> None:
     """Remove ``stage`` and every later stage output so resume can re-run them.
 
-    Keeps ``synthesize/system_prompt.txt`` when that stage directory is cleared.
-    Also drops root ``SECURITY.md`` / ``manifest.json`` when those stages are
-    in the cleared range.
+    Keeps synthesize map/reduce (and legacy) prompt overrides when that stage
+    directory is cleared. Also drops root ``SECURITY.md`` / ``manifest.json``
+    when those stages are in the cleared range.
     """
     if stage not in PIPELINE:
         raise ValueError(f"unknown stage: {stage}")
     start = PIPELINE.index(stage)
     cleared = PIPELINE[start:]
-    prompt_path = run_dir / "synthesize" / _PROMPT
-    prompt: str | None = None
-    if "synthesize" in cleared and prompt_path.is_file():
-        prompt = prompt_path.read_text(encoding="utf-8")
+    kept: dict[str, str] = {}
+    if "synthesize" in cleared:
+        synthesize = run_dir / "synthesize"
+        for name in _SYNTHESIZE_KEEP:
+            path = synthesize / name
+            if path.is_file():
+                kept[name] = path.read_text(encoding="utf-8")
     for name in cleared:
         directory = run_dir / name
         if directory.exists():
@@ -61,9 +69,11 @@ def clear_from(run_dir: Path, stage: str) -> None:
             path = run_dir / relative
             if path.is_file():
                 path.unlink()
-    if prompt is not None:
-        prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(prompt, encoding="utf-8")
+    if kept:
+        synthesize = run_dir / "synthesize"
+        synthesize.mkdir(parents=True, exist_ok=True)
+        for name, text in kept.items():
+            (synthesize / name).write_text(text, encoding="utf-8")
 
 
 def _is_retryable_status(status: object) -> bool:

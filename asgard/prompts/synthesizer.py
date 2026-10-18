@@ -1,71 +1,105 @@
-"""Synthesize the User Guideline from consolidated security discussions."""
+"""Map–Reduce synthesis of the User Guideline from consolidated security discussions."""
 
 import json
 from typing import Any
 
 from asgard.providers.models import Message
 
-SYSTEM_PROMPT = """\
-Based on the security classifications extracted from the following {repository}
-Pull Request discussions, generate the User Guideline section for the
-{repository} repository's security policy (SECURITY.md).
+MAP_PROMPT = """\
+Below are security discussions from pull requests of {repository}: for each,
+its pr_id, title, evidence quotes and the classifier's rationale.
 
-Goal: produce fine-grained, repository-specific security recommendations that a
-contributor can follow — naming concrete settings, APIs, classes, flags, or
-misconfigurations (e.g. "Never set DEBUG = True in production", "Do not apply
-|safe to user-supplied values"), not broad themes (e.g. "Session Integrity",
-"Prevent SQL Injection", "Secure Configuration").
+For each pull request, extract the concrete rules a contributor should follow,
+as stated or fixed in that pull request.
 
-Hard coverage rule (do not ignore):
-- If the input contains 40 or more security pull requests, you MUST return at
-  least 30 recommendations in total across all topics. Returning 8–15 is a
-  failure: those counts mean you over-merged. Keep expanding until you reach 30+.
-- Target roughly 30–45 recommendations for large inputs; quality over padding,
-  but never stop early by summarizing many PRs into one REC.
-- Scan the full input. Cover distinct patterns (config, auth/sessions, crypto,
-  SQL/ORM, XSS/templates, access control, CSRF, redirects/hosts, cookies/TLS,
-  dependencies, logging/tracebacks, exception handling, admin, uploads, etc.)
-  whenever the evidence supports them.
+- Each rule is about exactly one artifact: a setting, environment variable,
+  function, class, module, template tag or filter, CLI flag, header, or
+  dependency. If the pull request touches several artifacts or gives several
+  pieces of advice, return one rule for each.
+- artifact is the short name as written in the text, without module path,
+  parentheses or decorator sign (e.g. constant_time_compare, ALLOWED_HOSTS).
+- Use only that pull request's own text. If it states no concrete rule, return
+  no rules for it. Never use one pull request to explain another.
 
-Granularity:
-- One recommendation = one concrete control, misconfiguration, or fix pattern.
-  Do not bundle unrelated issues (password hashing + session signing + TLS)
-  into a single recommendation.
-- Split when the actionable advice differs (different setting, API, dependency,
-  or failure mode). Prefer citing 1–3 closely related PRs per recommendation.
-
-Specificity (required):
-- Every title and body must name project-specific artifacts from the evidence:
-  settings, env vars, functions, classes, modules, template filters, CLI flags,
-  dependency names/versions, or protocol/header names discussed in the PRs.
-- Titles are short imperatives that state the rule (what to do / not do), not
-  category labels.
-- Bodies explain the concrete risk and the correct practice in 1–3 sentences,
-  grounded in what the PR discussions actually said or fixed.
-- Strictly exclude generic advice that is not traceable to the provided
-  evidence (no textbook OWASP filler).
-
-Cite pull requests only as numbers that appear as pr_id in the input.
-Every recommendation cites at least one of those numbers, and no other number.
-
-Organize into thematic topics only as grouping; recommendations inside must
-still be specific. Before you finish, count the recommendations; if the input
-has ≥40 PRs and your count is below 30, split further and add uncovered
-controls from the remaining evidence.
-
-Return JSON with exactly these fields:
-- topics: a list of topics found in the data
-
-Each topic has:
-- title: the topic name
-- recommendations: a list of recommendations
-
-Each recommendation has:
-- title: a short imperative title naming the concrete control
-- text: the instruction, grounded in the evidence, naming project-specific
-  artifacts
-- pr_ids: a non-empty list of pr_id values from the input
+Return JSON: {"rules": [{"pr_id", "artifact", "rule", "risk"}]}. rule is one
+imperative sentence; risk is one sentence on what goes wrong otherwise.
 """
+
+REDUCE_PROMPT = """\
+Below are candidate rules extracted from security pull requests of
+{repository}, each with pr_id, artifact, rule and risk. Write the User
+Guidelines section of its SECURITY.md.
+
+Work in this order:
+1. Group the candidates by artifact.
+2. For each artifact, write one recommendation per distinct piece of advice.
+   Candidates with the same artifact and the same advice share a
+   recommendation; anything else stays separate.
+3. Only then group the finished recommendations into thematic topics. Topics
+   never merge, shorten or drop recommendations.
+
+Rules:
+- A recommendation is about exactly one artifact, and its title names it.
+  Never combine artifacts: rules about a password hasher, its salt and its
+  iteration count are three recommendations, not one.
+- There are at least as many recommendations as distinct artifacts.
+- Cite exactly the pr_ids of the candidates the recommendation covers.
+  Every candidate is covered by one recommendation.
+- Title: a short imperative. Text: Detailed sentences with the concrete risk and the
+  correct practice, using only what the candidates say.
+
+Return JSON: {"topics": [{"title", "recommendations":
+[{"title", "text", "pr_ids"}]}]}.
+"""
+
+# Forge / registry "synthesizer" role edits the reduce prompt.
+SYSTEM_PROMPT = REDUCE_PROMPT
+
+_MAP_FIELDS = ("pr_id", "title", "evidence", "rationale")
+
+
+def fill_repository(prompt: str, repository: str) -> str:
+    """Replace ``{repository}`` without interpreting other braces (JSON examples)."""
+    return prompt.replace("{repository}", repository)
+
+
+def map_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the per-PR payload sent to the map step (no ``link``)."""
+    return [{key: record[key] for key in _MAP_FIELDS} for record in records]
+
+
+def build_map_messages(
+    repository: str,
+    records: list[dict[str, Any]],
+    system_prompt: str | None = None,
+) -> list[Message]:
+    """Return the system prompt and one user message for a map batch.
+
+    ``system_prompt`` overrides ``MAP_PROMPT`` when set. Substitution is literal
+    so JSON braces in the prompt stay intact.
+    """
+    prompt = MAP_PROMPT if system_prompt is None else system_prompt
+    return [
+        Message(role="system", content=fill_repository(prompt, repository)),
+        Message(role="user", content=json.dumps(map_records(records), indent=2)),
+    ]
+
+
+def build_reduce_messages(
+    repository: str,
+    rules: list[dict[str, Any]],
+    system_prompt: str | None = None,
+) -> list[Message]:
+    """Return the system prompt and one user message for the reduce step.
+
+    ``system_prompt`` overrides ``REDUCE_PROMPT`` when set. Substitution is
+    literal so JSON braces in the prompt stay intact.
+    """
+    prompt = REDUCE_PROMPT if system_prompt is None else system_prompt
+    return [
+        Message(role="system", content=fill_repository(prompt, repository)),
+        Message(role="user", content=json.dumps(rules, indent=2)),
+    ]
 
 
 def build_messages(
@@ -73,14 +107,9 @@ def build_messages(
     records: list[dict[str, Any]],
     system_prompt: str | None = None,
 ) -> list[Message]:
-    """Return the system prompt and one user message for this repository.
+    """Backward-compatible alias for :func:`build_reduce_messages`.
 
-    ``repository`` is owner/name and replaces ``{repository}`` in the system prompt.
-    ``system_prompt`` overrides ``SYSTEM_PROMPT`` when set (same ``{repository}`` template).
-    The user message is the JSON of the full consolidated list.
+    Historical callers passed consolidated records; prefer the map/reduce
+    builders for new code.
     """
-    prompt = SYSTEM_PROMPT if system_prompt is None else system_prompt
-    return [
-        Message(role="system", content=prompt.format(repository=repository)),
-        Message(role="user", content=json.dumps(records, indent=2)),
-    ]
+    return build_reduce_messages(repository, records, system_prompt=system_prompt)

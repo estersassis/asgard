@@ -128,9 +128,9 @@ def builtin_body(role: str) -> str:
         from asgard.prompts.evaluator import SYSTEM_PROMPT
 
         return SYSTEM_PROMPT
-    from asgard.prompts.synthesizer import SYSTEM_PROMPT
+    from asgard.prompts.synthesizer import REDUCE_PROMPT
 
-    return SYSTEM_PROMPT
+    return REDUCE_PROMPT
 
 
 def adapt_prompt_body(role: str, body: str, *, batch: bool) -> str:
@@ -160,19 +160,49 @@ def resolve_system_prompt(role: str, config: object | None, run_dir: Path) -> st
     """Return the active system prompt body for ``role``.
 
     Precedence:
-    - synthesizer: ``synthesize/system_prompt.txt`` → registry selection → built-in
+    - synthesizer (reduce): ``synthesize/reduce_prompt.txt`` → legacy
+      ``synthesize/system_prompt.txt`` → registry selection → built-in reduce
     - classifier / evaluator: registry selection → built-in
 
     ``config`` may be a ``RunConfig``, a redacted config dict, or ``None`` (defaults).
     """
     _check_role(role)
     if role == "synthesizer":
-        override = Path(run_dir) / "synthesize" / "system_prompt.txt"
-        if override.is_file():
-            return override.read_text(encoding="utf-8")
+        return resolve_reduce_prompt(config, run_dir)
     version_id, registry_dir = _selection(config, role)
     root = Path(registry_dir) if registry_dir is not None else default_registry_root()
     return PromptRegistry(root).resolve(role, version_id)
+
+
+def resolve_map_prompt(config: object | None, run_dir: Path) -> str:
+    """Return the map-step prompt (run override, else built-in).
+
+    Map is not versioned in the Forge registry; only the Guideline screen and
+    ``synthesize/map_prompt.txt`` can override it.
+    """
+    _ = config  # reserved for future registry selection
+    override = Path(run_dir) / "synthesize" / "map_prompt.txt"
+    if override.is_file():
+        return override.read_text(encoding="utf-8")
+    from asgard.prompts.synthesizer import MAP_PROMPT
+
+    return MAP_PROMPT
+
+
+def resolve_reduce_prompt(config: object | None, run_dir: Path) -> str:
+    """Return the reduce-step prompt.
+
+    Precedence: ``reduce_prompt.txt`` → legacy ``system_prompt.txt`` → registry
+    → built-in reduce prompt.
+    """
+    synthesize = Path(run_dir) / "synthesize"
+    for name in ("reduce_prompt.txt", "system_prompt.txt"):
+        override = synthesize / name
+        if override.is_file():
+            return override.read_text(encoding="utf-8")
+    version_id, registry_dir = _selection(config, "synthesizer")
+    root = Path(registry_dir) if registry_dir is not None else default_registry_root()
+    return PromptRegistry(root).resolve("synthesizer", version_id)
 
 
 def _selection(config: object | None, role: str) -> tuple[str, Path | None]:

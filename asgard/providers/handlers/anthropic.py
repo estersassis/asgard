@@ -7,8 +7,9 @@ from anthropic import Anthropic
 from asgard.providers.errors import ProviderError
 from asgard.providers.models import LLMResponse, Message, response_schema
 
-# Batch evaluation of many PRs needs headroom; 4k truncates mid-JSON.
-_MAX_TOKENS = 16384
+# Structured synthesis (reduce) of hundreds of rules needs a large budget.
+# Claude Opus/Sonnet 4.6+ allow up to 128k output tokens on the Messages API.
+_MAX_TOKENS = 128_000
 
 
 class AnthropicHandler:

@@ -12,6 +12,7 @@
   ];
 
   var FINDING_ORDER = ["decision", "evidence", "completeness", "rationale"];
+  var PAGE_SIZE = 50;
   var STATUS_FILTERS = [
     "all",
     "classifying",
@@ -54,6 +55,10 @@
     mean: document.getElementById("council-mean"),
     filters: document.getElementById("council-filters"),
     prs: document.getElementById("council-pr-list"),
+    pager: document.getElementById("council-pager"),
+    pagePrev: document.getElementById("council-page-prev"),
+    pageNext: document.getElementById("council-page-next"),
+    pageLabel: document.getElementById("council-page-label"),
     status: document.getElementById("council-status"),
     title: document.getElementById("council-pr-title"),
     waiting: document.getElementById("council-waiting"),
@@ -70,6 +75,7 @@
     prs: {},
     selected: null,
     statusFilter: "all",
+    page: 1,
     why: null,
     totals: null,
     metrics: null,
@@ -78,6 +84,7 @@
     seen: {},
     retrying: false,
     batchReprocessing: false,
+    detailRequest: 0,
   };
 
   function emptyPr(prId) {
@@ -94,6 +101,7 @@
       rounds: [],
       liveRound: null,
       reprocessing: false,
+      detailLoaded: false,
     };
   }
 
@@ -142,6 +150,7 @@
     pr.iterations = 0;
     pr.liveRound = null;
     pr.reprocessing = true;
+    pr.detailLoaded = false;
   }
 
   function clearReprocessingFlags() {
@@ -183,7 +192,7 @@
       .catch(function (err) {
         var message = err.message || String(err);
         if (batch) state.batchReprocessing = false;
-        return loadItems()
+        return loadIndex()
           .catch(function () {
             /* ignore */
           })
@@ -411,8 +420,9 @@
     });
   }
 
-  function applyTerminal(pr, payload) {
+  function applyTerminal(pr, payload, options) {
     if (!payload || typeof payload !== "object") return;
+    var withTraces = !options || options.withTraces !== false;
     pr.status = typeof payload.status === "string" ? payload.status : pr.status;
     pr.iterations =
       typeof payload.iterations === "number" ? payload.iterations : pr.iterations;
@@ -421,14 +431,22 @@
       if (typeof classification.has_security_discussion === "boolean") {
         pr.decision = classification.has_security_discussion;
       }
+    } else if (typeof payload.has_security_discussion === "boolean") {
+      pr.decision = payload.has_security_discussion;
+    }
+    if (typeof payload.error === "string" && payload.error) {
+      pr.error = payload.error;
     }
     pr.phase = "done";
     pr.liveRound = null;
     pr.reprocessing = false;
-    if (Array.isArray(payload.traces)) {
+    if (withTraces && Array.isArray(payload.traces)) {
       pr.rounds = buildRounds(pr.prId, payload.traces);
+      pr.detailLoaded = true;
       if (pr.status === "error") {
-        pr.error = errorFromTraces(payload.traces) || pr.error ||
+        pr.error =
+          errorFromTraces(payload.traces) ||
+          pr.error ||
           "Classification failed for this pull request.";
       }
     } else if (pr.status === "error" && !pr.error) {
@@ -436,18 +454,18 @@
     }
   }
 
-  function applyTracesForPr(prId, lines) {
-    var pr = ensurePr(prId);
-    var mine = lines.filter(function (line) {
-      return belongsTo(line, prId);
-    });
-    pr.rounds = buildRounds(prId, mine);
-    if (pr.status === "error") {
-      pr.error =
-        errorFromTraces(mine) ||
-        pr.error ||
-        "Classification failed for this pull request.";
+  function decisionFromPayload(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    if (typeof payload.has_security_discussion === "boolean") {
+      return payload.has_security_discussion;
     }
+    var classification = payload.classification;
+    if (classification && typeof classification === "object") {
+      if (typeof classification.has_security_discussion === "boolean") {
+        return classification.has_security_discussion;
+      }
+    }
+    return null;
   }
 
   function recountTotalsFromPayloads(payloads) {
@@ -457,14 +475,7 @@
     var error = 0;
     payloads.forEach(function (payload) {
       if (!payload || typeof payload !== "object") return;
-      var decision = null;
-      var classification = payload.classification;
-      if (classification && typeof classification === "object") {
-        if (typeof classification.has_security_discussion === "boolean") {
-          decision = classification.has_security_discussion;
-        }
-      }
-      var bucket = bucketOf(payload.status, decision);
+      var bucket = bucketOf(payload.status, decisionFromPayload(payload));
       if (bucket === "security") security += 1;
       else if (bucket === "not security") notSecurity += 1;
       else if (bucket === "unresolved") unresolved += 1;
@@ -500,16 +511,14 @@
     };
   }
 
-  function seedFromPrefilter(pulls) {
-    if (!Array.isArray(pulls)) return;
-    pulls.forEach(function (pull) {
-      if (!pull || typeof pull !== "object") return;
-      var context = pull.context;
-      if (!context || typeof context !== "object") return;
-      var prId = context.pr_id;
+  function seedFromTitles(rows) {
+    if (!Array.isArray(rows)) return;
+    rows.forEach(function (row) {
+      if (!row || typeof row !== "object") return;
+      var prId = row.pr_id;
       if (typeof prId !== "string" || !prId) return;
       var pr = ensurePr(prId);
-      if (typeof context.title === "string") pr.title = context.title;
+      if (typeof row.title === "string") pr.title = row.title;
     });
   }
 
@@ -545,26 +554,31 @@
     });
   }
 
-  function loadItems() {
-    return api("/classify/items").then(function (result) {
-      if (!result.ok) return;
-      var rows = parseJsonl(result.text);
+  function loadTitles() {
+    return api("/prefilter/titles").then(function (result) {
+      if (!result.ok || !Array.isArray(result.body)) return;
+      seedFromTitles(result.body);
+    });
+  }
+
+  function loadIndex() {
+    return api("/classify/index").then(function (result) {
+      if (!result.ok || !Array.isArray(result.body)) return;
       var payloads = [];
       var seen = {};
-      rows.forEach(function (row) {
+      result.body.forEach(function (row) {
         if (!row || typeof row !== "object") return;
-        var payload = row.payload;
-        if (!payload || typeof payload !== "object") return;
-        var prId =
-          typeof payload.pr_id === "string"
-            ? payload.pr_id
-            : typeof row.id === "string"
-              ? row.id
-              : null;
+        var prId = typeof row.pr_id === "string" ? row.pr_id : null;
         if (!prId) return;
         var pr = ensurePr(prId);
-        applyTerminal(pr, payload);
-        payloads.push(payload);
+        // Keep a loaded timeline unless status changed underneath us.
+        var priorStatus = pr.status;
+        applyTerminal(pr, row, { withTraces: false });
+        if (priorStatus !== pr.status) {
+          pr.rounds = [];
+          pr.detailLoaded = false;
+        }
+        payloads.push(row);
         seen[prId] = true;
       });
       // Dropped retryable checkpoints must not stay painted from the log.
@@ -582,31 +596,17 @@
     });
   }
 
-  function loadOutput() {
-    return api("/classify/output").then(function (result) {
-      if (!result.ok || !Array.isArray(result.body)) return false;
-      result.body.forEach(function (payload) {
-        if (!payload || typeof payload !== "object") return;
-        var prId = payload.pr_id;
-        if (typeof prId !== "string") return;
-        var pr = ensurePr(prId);
-        applyTerminal(pr, payload);
-      });
-      recountTotalsFromPayloads(result.body);
-      return true;
-    });
-  }
-
-  function loadTrace() {
-    return api("/classify/trace").then(function (result) {
-      if (!result.ok) return;
-      var lines = parseJsonl(result.text);
-      state.order.forEach(function (prId) {
-        applyTracesForPr(prId, lines);
-      });
-      Object.keys(state.prs).forEach(function (prId) {
-        if (state.order.indexOf(prId) < 0) applyTracesForPr(prId, lines);
-      });
+  function ensureDetail(prId) {
+    var pr = state.prs[prId];
+    if (!pr || pr.detailLoaded) return Promise.resolve();
+    if (pr.phase !== "done" && !isRetryableStatus(pr.status)) {
+      return Promise.resolve();
+    }
+    var request = (state.detailRequest += 1);
+    return api("/classify/items/" + encodeURIComponent(prId)).then(function (result) {
+      if (request !== state.detailRequest) return;
+      if (!result.ok || !result.body || typeof result.body !== "object") return;
+      applyTerminal(pr, result.body, { withTraces: true });
     });
   }
 
@@ -622,15 +622,12 @@
   }
 
   function loadFinishedArtifacts() {
-    return loadOutput().then(function (loaded) {
-      if (!loaded) return false;
-      state.classifyDone = true;
-      return loadTrace()
-        .then(loadMetrics)
-        .then(function () {
-          return true;
-        });
-    });
+    return loadIndex()
+      .then(loadMetrics)
+      .then(function () {
+        if (state.metrics) state.classifyDone = true;
+        return true;
+      });
   }
 
   function eventKey(event) {
@@ -736,7 +733,11 @@
     if (typeof prId !== "string") return null;
     ensurePr(prId);
     if (!live) return "render";
-    return loadItems().then(render);
+    return loadIndex()
+      .then(function () {
+        return ensureDetail(prId);
+      })
+      .then(render);
   }
 
   function onClassifyProgress(event) {
@@ -802,18 +803,29 @@
     if (!state.prs[prId]) return;
     state.selected = prId;
     state.why = null;
+    ensurePageForSelection();
     render();
+    ensureDetail(prId).then(function () {
+      if (state.selected === prId) render();
+    });
   }
 
   function setStatusFilter(filter) {
     if (STATUS_FILTERS.indexOf(filter) < 0) return;
     state.statusFilter = filter;
+    state.page = 1;
     state.why = null;
     var visible = visibleOrder();
     if (visible.indexOf(state.selected) < 0) {
       state.selected = visible.length ? visible[0] : null;
     }
+    ensurePageForSelection();
     render();
+    if (state.selected) {
+      ensureDetail(state.selected).then(function () {
+        render();
+      });
+    }
   }
 
   function matchesFilter(pr) {
@@ -826,6 +838,48 @@
       var pr = state.prs[prId];
       return pr && matchesFilter(pr);
     });
+  }
+
+  function pageCount(total) {
+    return Math.max(1, Math.ceil(total / PAGE_SIZE) || 1);
+  }
+
+  function ensurePageForSelection() {
+    var visible = visibleOrder();
+    var pages = pageCount(visible.length);
+    if (state.page > pages) state.page = pages;
+    if (state.page < 1) state.page = 1;
+    if (!state.selected) return;
+    var index = visible.indexOf(state.selected);
+    if (index < 0) return;
+    state.page = Math.floor(index / PAGE_SIZE) + 1;
+  }
+
+  function pagedOrder() {
+    var visible = visibleOrder();
+    var pages = pageCount(visible.length);
+    if (state.page > pages) state.page = pages;
+    if (state.page < 1) state.page = 1;
+    var start = (state.page - 1) * PAGE_SIZE;
+    return visible.slice(start, start + PAGE_SIZE);
+  }
+
+  function setPage(next) {
+    var pages = pageCount(visibleOrder().length);
+    var page = Math.max(1, Math.min(pages, next));
+    if (page === state.page) return;
+    state.page = page;
+    var slice = pagedOrder();
+    if (slice.indexOf(state.selected) < 0) {
+      state.selected = slice.length ? slice[0] : null;
+      state.why = null;
+    }
+    render();
+    if (state.selected) {
+      ensureDetail(state.selected).then(function () {
+        render();
+      });
+    }
   }
 
   function toggleWhy(key) {
@@ -918,11 +972,27 @@
     });
   }
 
+  function renderPager() {
+    if (!els.pager || !els.pageLabel || !els.pagePrev || !els.pageNext) return;
+    var total = visibleOrder().length;
+    var pages = pageCount(total);
+    if (total <= PAGE_SIZE) {
+      els.pager.hidden = true;
+      return;
+    }
+    els.pager.hidden = false;
+    var start = total ? (state.page - 1) * PAGE_SIZE + 1 : 0;
+    var end = Math.min(state.page * PAGE_SIZE, total);
+    els.pageLabel.textContent = start + "–" + end + " of " + total;
+    els.pagePrev.disabled = state.page <= 1;
+    els.pageNext.disabled = state.page >= pages;
+  }
+
   function renderList() {
     if (!els.prs) return;
     els.prs.innerHTML = "";
     if (!els.prTemplate) return;
-    visibleOrder().forEach(function (prId) {
+    pagedOrder().forEach(function (prId) {
       var pr = state.prs[prId];
       if (!pr) return;
       var node = els.prTemplate.content.firstElementChild.cloneNode(true);
@@ -953,6 +1023,7 @@
       });
       els.prs.appendChild(node);
     });
+    renderPager();
   }
 
   function renderFindings(marks, whyList, findings, open) {
@@ -1144,6 +1215,7 @@
     var visible = visibleOrder();
     if (!state.selected || visible.indexOf(state.selected) < 0) {
       state.selected = visible.length ? visible[0] : null;
+      ensurePageForSelection();
     }
     renderTotals();
     renderMetrics();
@@ -1161,6 +1233,16 @@
   if (els.retryAll) {
     els.retryAll.addEventListener("click", function () {
       retryClassify({ all_errors: true });
+    });
+  }
+  if (els.pagePrev) {
+    els.pagePrev.addEventListener("click", function () {
+      setPage(state.page - 1);
+    });
+  }
+  if (els.pageNext) {
+    els.pageNext.addEventListener("click", function () {
+      setPage(state.page + 1);
     });
   }
 
@@ -1204,9 +1286,13 @@
         if (result.ok && result.body && !result.body.running) {
           closeSource();
           clearReprocessingFlags();
-          return loadItems()
+          return loadIndex()
             .catch(function () {
               /* ignore */
+            })
+            .then(function () {
+              if (state.selected) return ensureDetail(state.selected);
+              return null;
             })
             .then(render);
         }
@@ -1215,53 +1301,38 @@
     });
   }
 
-  function hydrateFromLog(text) {
-    parseJsonl(text).forEach(function (event) {
-      if (!event || !event.type) return;
-      if (EVENT_TYPES.indexOf(event.type) < 0) return;
-      reduce(event, false);
-    });
-  }
-
-  Promise.all([
-    api(""),
-    api("/prefilter/output").catch(function () {
-      return { ok: false };
-    }),
-    api("/log").catch(function () {
-      return { ok: false, text: "" };
-    }),
-  ])
-    .then(function (results) {
-      var status = results[0];
-      var prefilter = results[1];
-      var log = results[2];
-
+  api("")
+    .then(function (status) {
       if (!status.ok) return;
-
-      if (prefilter.ok) seedFromPrefilter(prefilter.body);
-
-      return loadMineNumbers()
+      return loadTitles()
         .catch(function () {
-          /* display ids stay as stored pr_id */
+          /* titles optional */
         })
         .then(function () {
-          if (log.ok) hydrateFromLog(log.text);
-        })
-        .then(function () {
-          // items.jsonl is the source of truth over historical log events.
-          return loadItems().catch(function () {
+          return loadIndex().catch(function () {
             /* no items yet */
           });
         })
         .then(function () {
-          return loadFinishedArtifacts().catch(function () {
-            return false;
+          return loadMineNumbers().catch(function () {
+            /* display ids stay as stored pr_id */
           });
         })
         .then(function () {
+          return loadMetrics().catch(function () {
+            /* metrics optional until classify finishes */
+          });
+        })
+        .then(function () {
+          if (state.metrics) state.classifyDone = true;
           openSource();
           render();
+          if (state.selected) {
+            return ensureDetail(state.selected).then(function () {
+              render();
+            });
+          }
+          return null;
         });
     })
     .catch(function () {

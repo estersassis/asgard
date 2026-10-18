@@ -15,7 +15,8 @@ from asgard.core.stage import RunContext
 from asgard.core.stages.bundle import BundleStage
 from asgard.prompts.classifier import SYSTEM_PROMPT as CLASSIFIER_PROMPT
 from asgard.prompts.evaluator import SYSTEM_PROMPT as EVALUATOR_PROMPT
-from asgard.prompts.synthesizer import SYSTEM_PROMPT as SYNTHESIZER_PROMPT
+from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT
+from asgard.prompts.synthesizer import fill_repository
 
 TOKEN = "ghp_bundle_secret"
 _METRICS = {
@@ -131,16 +132,24 @@ def _run(root: Path, *, export_xlsx: bool = False) -> dict[str, object]:
     return manifest
 
 
-def test_synthesizer_prompt_hash_uses_override_file(tmp_path: Path) -> None:
+def test_synthesizer_prompt_hash_uses_override_files(tmp_path: Path) -> None:
     _layout(tmp_path)
-    override = "Override for {repository}."
-    _write(tmp_path / "synthesize" / "system_prompt.txt", override)
+    map_override = "Map override for {repository}."
+    reduce_override = "Reduce override for {repository}."
+    _write(tmp_path / "synthesize" / "map_prompt.txt", map_override)
+    _write(tmp_path / "synthesize" / "reduce_prompt.txt", reduce_override)
 
     manifest = _run(tmp_path)
 
-    assert manifest["prompts"]["synthesizer"] == _sha(override.format(repository="acme/app"))
-    assert manifest["prompts"]["synthesizer"] != _sha(
-        SYNTHESIZER_PROMPT.format(repository="acme/app")
+    assert manifest["prompts"]["synthesizer_map"] == _sha(
+        fill_repository(map_override, "acme/app")
+    )
+    assert manifest["prompts"]["synthesizer_reduce"] == _sha(
+        fill_repository(reduce_override, "acme/app")
+    )
+    assert manifest["prompts"]["synthesizer"] == manifest["prompts"]["synthesizer_reduce"]
+    assert manifest["prompts"]["synthesizer_reduce"] != _sha(
+        fill_repository(REDUCE_PROMPT, "acme/app")
     )
 
 
@@ -203,7 +212,9 @@ def test_manifest_describes_every_file_and_omits_secrets(tmp_path: Path) -> None
     assert prompts == {
         "classifier": _sha(CLASSIFIER_PROMPT),
         "evaluator": _sha(EVALUATOR_PROMPT),
-        "synthesizer": _sha(SYNTHESIZER_PROMPT.format(repository="acme/app")),
+        "synthesizer_map": _sha(fill_repository(MAP_PROMPT, "acme/app")),
+        "synthesizer_reduce": _sha(fill_repository(REDUCE_PROMPT, "acme/app")),
+        "synthesizer": _sha(fill_repository(REDUCE_PROMPT, "acme/app")),
     }
     assert manifest["models"] == {
         "classifier": {"provider": "fake", "model": "class-model"},

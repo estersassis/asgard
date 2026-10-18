@@ -94,7 +94,7 @@ def test_resolve_synthesizer_run_dir_override_wins(tmp_path: Path) -> None:
     registry = PromptRegistry(tmp_path / "registry")
     version = registry.save("synthesizer", name="alt", body="from registry\n")
     run_dir = tmp_path / "run"
-    override = run_dir / "synthesize" / "system_prompt.txt"
+    override = run_dir / "synthesize" / "reduce_prompt.txt"
     override.parent.mkdir(parents=True)
     override.write_text("from run dir\n", encoding="utf-8")
     config = {
@@ -105,3 +105,23 @@ def test_resolve_synthesizer_run_dir_override_wins(tmp_path: Path) -> None:
     }
 
     assert resolve_system_prompt("synthesizer", config, run_dir) == "from run dir\n"
+
+
+def test_resolve_map_and_reduce_prompts(tmp_path: Path) -> None:
+    from asgard.core.prompt_registry import resolve_map_prompt, resolve_reduce_prompt
+    from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT
+
+    run_dir = tmp_path / "run"
+    synthesize = run_dir / "synthesize"
+    synthesize.mkdir(parents=True)
+
+    assert resolve_map_prompt(None, run_dir) == MAP_PROMPT
+    assert resolve_reduce_prompt(None, run_dir) == REDUCE_PROMPT
+
+    (synthesize / "map_prompt.txt").write_text("map override\n", encoding="utf-8")
+    (synthesize / "system_prompt.txt").write_text("legacy reduce\n", encoding="utf-8")
+    assert resolve_map_prompt(None, run_dir) == "map override\n"
+    assert resolve_reduce_prompt(None, run_dir) == "legacy reduce\n"
+
+    (synthesize / "reduce_prompt.txt").write_text("reduce override\n", encoding="utf-8")
+    assert resolve_reduce_prompt(None, run_dir) == "reduce override\n"
