@@ -27,9 +27,9 @@ from asgard.core.config import (
     load_run,
     probe_run,
 )
-from asgard.core.pipeline import PIPELINE
 from asgard.core.pilot.gate import GateThresholds, PromoteError
 from asgard.core.pilot.set import PilotSet
+from asgard.core.pipeline import PIPELINE
 from asgard.core.prompt_registry import (
     ROLES,
     PromptRegistry,
