@@ -8,18 +8,22 @@
   var ROLES = [
     { id: "classifier", label: "Classifier" },
     { id: "evaluator", label: "Evaluator" },
-    { id: "synthesizer", label: "Synthesizer" },
   ];
 
   var els = {
     tabs: document.getElementById("forge-tabs"),
     version: document.getElementById("forge-version"),
     save: document.getElementById("forge-save"),
+    saveForm: document.getElementById("forge-save-form"),
+    saveName: document.getElementById("forge-save-name"),
+    saveNotes: document.getElementById("forge-save-notes"),
+    saveCancel: document.getElementById("forge-save-cancel"),
     meta: document.getElementById("forge-meta"),
     prompt: document.getElementById("forge-prompt"),
     pilotControls: document.getElementById("forge-pilot-controls"),
     pilotHint: document.getElementById("forge-pilot-hint"),
     pilotSet: document.getElementById("forge-pilot-set"),
+    pilotMode: document.getElementById("forge-pilot-mode"),
     upload: document.getElementById("forge-upload"),
     run: document.getElementById("forge-run"),
     result: document.getElementById("forge-result"),
@@ -62,7 +66,7 @@
   var state = {
     role: "classifier",
     versions: [],
-    activeIds: { classifier: "default", evaluator: "default", synthesizer: "default" },
+    activeIds: { classifier: "default", evaluator: "default" },
     selectedId: "",
     loadedBody: "",
     pilotSets: [],
@@ -72,6 +76,7 @@
     running: false,
     detailsOpen: false,
     decided: null,
+    runAfterSave: false,
   };
 
   function api(path, options) {
@@ -95,6 +100,15 @@
     if (!body) return fallback;
     if (typeof body === "string") return body;
     if (typeof body.detail === "string") return body.detail;
+    if (Array.isArray(body.detail) && body.detail.length) {
+      return body.detail
+        .map(function (item) {
+          if (!item || typeof item !== "object") return String(item);
+          if (typeof item.msg === "string") return item.msg;
+          return JSON.stringify(item);
+        })
+        .join("; ");
+    }
     return fallback;
   }
 
@@ -108,14 +122,17 @@
     els.error.textContent = message;
   }
 
-  function setStatus(message) {
+  function setStatus(message, options) {
+    var live = options && options.live;
     if (!message) {
       els.status.hidden = true;
       els.status.textContent = "";
+      els.status.classList.remove("is-live");
       return;
     }
     els.status.hidden = false;
     els.status.textContent = message;
+    els.status.classList.toggle("is-live", !!live || !!state.running);
   }
 
   function shortSha(sha) {
@@ -142,21 +159,30 @@
   }
 
   function parseGateInput(input) {
-    var raw = String(input.value || "").trim();
-    if (!raw || raw === "—" || raw.toLowerCase() === "none") return null;
+    if (!input) return null;
+    var raw = String(input.value || "")
+      .trim()
+      .replace(/[\u2013\u2014\u2212]/g, "-");
+    if (!raw || raw === "-" || raw.toLowerCase() === "none") return null;
     var value = Number(raw);
     if (!isFinite(value)) return null;
     return value;
   }
 
   function readThresholds() {
-    return {
+    var thresholds = {
       f1_min: parseGateInput(els.gateF1),
       kappa_min: parseGateInput(els.gateKappa),
-      accuracy_min: parseGateInput(els.gateAccuracy),
-      precision_min: parseGateInput(els.gatePrecision),
-      recall_min: parseGateInput(els.gateRecall),
     };
+    if (thresholds.f1_min == null) thresholds.f1_min = 0.9;
+    if (thresholds.kappa_min == null) thresholds.kappa_min = 0.8;
+    var accuracy = parseGateInput(els.gateAccuracy);
+    var precision = parseGateInput(els.gatePrecision);
+    var recall = parseGateInput(els.gateRecall);
+    if (accuracy != null) thresholds.accuracy_min = accuracy;
+    if (precision != null) thresholds.precision_min = precision;
+    if (recall != null) thresholds.recall_min = recall;
+    return thresholds;
   }
 
   function applyThresholdLabels(thresholds) {
@@ -349,11 +375,11 @@
     if (thresholds.f1_min != null) els.gateF1.value = formatGateLabel(thresholds.f1_min);
     if (thresholds.kappa_min != null) els.gateKappa.value = formatGateLabel(thresholds.kappa_min);
     els.gateAccuracy.value =
-      thresholds.accuracy_min != null ? formatGateLabel(thresholds.accuracy_min) : "—";
+      thresholds.accuracy_min != null ? formatGateLabel(thresholds.accuracy_min) : "";
     els.gatePrecision.value =
-      thresholds.precision_min != null ? formatGateLabel(thresholds.precision_min) : "—";
+      thresholds.precision_min != null ? formatGateLabel(thresholds.precision_min) : "";
     els.gateRecall.value =
-      thresholds.recall_min != null ? formatGateLabel(thresholds.recall_min) : "—";
+      thresholds.recall_min != null ? formatGateLabel(thresholds.recall_min) : "";
 
     els.cmTp.textContent = confusion.tp != null ? String(confusion.tp) : "—";
     els.cmFn.textContent = confusion.fn != null ? String(confusion.fn) : "—";
@@ -362,11 +388,16 @@
     els.cmFn.classList.toggle("is-fail", Number(confusion.fn) > 0);
     els.cmFp.classList.toggle("is-fail", Number(confusion.fp) > 0);
 
-    els.passLine.textContent =
-      "Single pass F1 " +
-      formatScore(single.f1) +
-      " · with evaluator " +
-      formatScore(candidate.f1);
+    if ((metrics.mode || "full") === "classifier") {
+      els.passLine.textContent =
+        "Classifier only · candidate F1 " + formatScore(candidate.f1);
+    } else {
+      els.passLine.textContent =
+        "Single pass F1 " +
+        formatScore(single.f1) +
+        " · with evaluator " +
+        formatScore(candidate.f1);
+    }
 
     var status = gateStatusText();
     els.gateStatus.textContent = status.text;
@@ -429,7 +460,6 @@
         state.activeIds = {
           classifier: result.body.classifier || "default",
           evaluator: result.body.evaluator || "default",
-          synthesizer: result.body.synthesizer || "default",
         };
       }
     });
@@ -445,15 +475,43 @@
     });
   }
 
-  function saveVersion() {
-    var name = window.prompt("Version name");
-    if (name === null) return;
-    name = String(name).trim();
-    if (!name) {
-      setError("Version name is required.");
+  function isDirty() {
+    return String(els.prompt.value) !== String(state.loadedBody);
+  }
+
+  function setSaveFormOpen(open) {
+    if (!els.saveForm) return;
+    els.saveForm.hidden = !open;
+    if (els.save) els.save.hidden = open;
+    if (open && els.saveName) {
+      if (!els.saveName.value.trim()) {
+        var active = state.versions.find(function (v) {
+          return v.id === state.selectedId;
+        });
+        var base = active && active.name && active.name !== "default" ? active.name : "candidate";
+        els.saveName.value = base;
+      }
+      els.saveName.focus();
+      els.saveName.select();
+    }
+  }
+
+  function saveVersion(event) {
+    if (event) event.preventDefault();
+    if (!els.saveForm || els.saveForm.hidden) {
+      setError("");
+      setSaveFormOpen(true);
       return;
     }
-    var notes = window.prompt("Notes (optional)", "") || "";
+    var name = String(els.saveName.value || "").trim();
+    if (!name) {
+      setError("Version name is required.");
+      els.saveName.focus();
+      return;
+    }
+    var notes = String(els.saveNotes.value || "").trim();
+    var runAfter = state.runAfterSave;
+    state.runAfterSave = false;
     setError("");
     setStatus("Saving…");
     api("/api/prompts/" + encodeURIComponent(state.role), {
@@ -462,7 +520,7 @@
       body: JSON.stringify({
         name: name,
         body: els.prompt.value,
-        notes: String(notes).trim(),
+        notes: notes,
       }),
     })
       .then(function (result) {
@@ -471,13 +529,34 @@
         }
         state.selectedId = result.body.id;
         state.loadedBody = result.body.body || els.prompt.value;
+        els.saveName.value = "";
+        els.saveNotes.value = "";
+        setSaveFormOpen(false);
         setStatus("Saved " + result.body.name + ".");
-        return loadVersions();
+        return loadVersions().then(function () {
+          if (runAfter) runPilot();
+        });
       })
       .catch(function (err) {
         setStatus("");
         setError(err && err.message ? err.message : "Save failed.");
       });
+  }
+
+  function formatPilotProgress(progress) {
+    if (!progress || typeof progress !== "object") {
+      return "Running pilot…";
+    }
+    if (typeof progress.message === "string" && progress.message) {
+      return progress.message;
+    }
+    var phase = progress.phase_label || progress.phase || "Pilot";
+    var done = progress.done;
+    var total = progress.total;
+    if (done != null && total != null) {
+      return "Running pilot · " + phase + " · " + done + "/" + total + " PRs";
+    }
+    return "Running pilot · " + phase;
   }
 
   function waitPilotDone(runId) {
@@ -486,6 +565,7 @@
         throw new Error(detailMessage(result.body, "Pilot status failed."));
       }
       if (result.body && (result.body.running || result.body.status === "running")) {
+        setStatus(formatPilotProgress(result.body.progress), { live: true });
         return new Promise(function (resolve) {
           window.setTimeout(function () {
             resolve(waitPilotDone(runId));
@@ -502,8 +582,11 @@
       setError("Select a candidate version first.");
       return;
     }
-    if (els.prompt.value !== state.loadedBody) {
-      setError("Save as a new version before running the pilot.");
+    if (isDirty()) {
+      state.runAfterSave = true;
+      setError("");
+      setStatus("Name this version to save your edits, then the pilot will start.");
+      setSaveFormOpen(true);
       return;
     }
 
@@ -513,7 +596,7 @@
       return;
     }
 
-    var config = els.config.value.trim();
+    var config = els.config ? els.config.value.trim() : "";
     if (!config) {
       setError(
         "Set a config path before running the pilot (asgard.toml or a run's config.json)."
@@ -521,13 +604,23 @@
       return;
     }
 
-    var payload = {
-      candidate: state.selectedId,
-      active: state.activeIds.classifier || "default",
-      pilot_set: pilotSet,
-      config: config,
-      thresholds: readThresholds(),
-    };
+    var mode = els.pilotMode ? els.pilotMode.value : "classifier";
+    if (mode !== "full") mode = "classifier";
+
+    var payload;
+    try {
+      payload = {
+        candidate: state.selectedId,
+        active: state.activeIds.classifier || "default",
+        pilot_set: pilotSet,
+        config: config,
+        thresholds: readThresholds(),
+        mode: mode,
+      };
+    } catch (err) {
+      setError(err && err.message ? err.message : "Could not build pilot request.");
+      return;
+    }
 
     state.running = true;
     state.decided = null;
@@ -536,7 +629,7 @@
     updateRoleChrome();
     updatePromote();
     setError("");
-    setStatus("Running pilot…");
+    setStatus("Running pilot…", { live: true });
 
     api("/api/pilot/runs", {
       method: "POST",
@@ -566,11 +659,13 @@
         }
         state.metrics = metrics.body;
         renderMetrics();
+        state.running = false;
         setStatus("Pilot finished.");
       })
       .catch(function (err) {
         state.metrics = null;
         renderMetrics();
+        state.running = false;
         setStatus("");
         setError(err && err.message ? err.message : "Pilot failed.");
       })
@@ -715,7 +810,21 @@
     });
   });
 
-  els.save.addEventListener("click", saveVersion);
+  els.save.addEventListener("click", function () {
+    state.runAfterSave = false;
+    saveVersion();
+  });
+  if (els.saveForm) {
+    els.saveForm.addEventListener("submit", saveVersion);
+  }
+  if (els.saveCancel) {
+    els.saveCancel.addEventListener("click", function () {
+      state.runAfterSave = false;
+      setSaveFormOpen(false);
+      setStatus("");
+      setError("");
+    });
+  }
   els.run.addEventListener("click", runPilot);
   els.reject.addEventListener("click", reject);
   els.promote.addEventListener("click", promote);
@@ -737,11 +846,19 @@
   els.config.addEventListener("input", updatePromote);
 
   function prefillConfigFromRun() {
+    if (!els.config) return Promise.resolve();
     var runId = (root.getAttribute("data-run") || "").trim();
-    if (!runId || els.config.value.trim()) return Promise.resolve();
+    if (!runId) {
+      runId = new URLSearchParams(window.location.search).get("run") || "";
+    }
+    if (!runId) return Promise.resolve();
+    // Always sync from the run API when ?run= is present so a mistaken
+    // runs/{id}/config.json (or browser autofill) does not stick.
     return api("/api/runs/" + encodeURIComponent(runId)).then(function (result) {
       if (!result.ok || !result.body || !result.body.output_dir) return;
-      els.config.value = String(result.body.output_dir).replace(/\/?$/, "") + "/config.json";
+      els.config.value =
+        String(result.body.output_dir).replace(/\/?$/, "") + "/config.json";
+      updatePromote();
     });
   }
 

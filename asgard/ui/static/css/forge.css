@@ -107,6 +107,25 @@
   margin-top: -6px;
 }
 
+.forge-save-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 16px;
+}
+
+.forge-save-form[hidden] {
+  display: none;
+}
+
+.forge-save-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
 #forge-prompt {
   width: 100%;
   background: transparent;
@@ -222,6 +241,10 @@
   max-width: 100%;
 }
 
+.forge-mode-field {
+  flex: 0 1 220px;
+}
+
 .forge-actions {
   display: flex;
   justify-content: space-between;
@@ -252,15 +275,57 @@
   cursor: not-allowed;
 }
 
-.forge-status,
-.forge-error {
-  margin: 0;
-  font-size: 13px;
-  color: var(--ink-soft);
+.forge-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 0;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--line);
+  font-family: "Fraunces", serif;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.forge-status::before {
+  content: "";
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-soft);
+}
+
+.forge-status.is-live {
+  color: var(--ember-hi);
+}
+
+.forge-status.is-live::before {
+  background: var(--ember-hi);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ember-hi) 55%, transparent);
+  animation: forge-status-pulse 1.4s ease-out infinite;
 }
 
 .forge-error {
+  margin: 0;
+  font-size: 13px;
   color: var(--no);
+}
+
+@keyframes forge-status-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ember-hi) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 
 @media (max-width: 640px) {

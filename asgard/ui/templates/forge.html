@@ -16,7 +16,6 @@
       <div class="forge-tabs" role="tablist" aria-label="Role" id="forge-tabs">
         <button type="button" role="tab" class="tab on" data-role="classifier" aria-selected="true" id="forge-tab-classifier">Classifier</button>
         <button type="button" role="tab" class="tab" data-role="evaluator" aria-selected="false" id="forge-tab-evaluator">Evaluator</button>
-        <button type="button" role="tab" class="tab" data-role="synthesizer" aria-selected="false" id="forge-tab-synthesizer">Synthesizer</button>
       </div>
 
       <div class="forge-version-row">
@@ -26,6 +25,20 @@
         </label>
         <button type="button" class="link" id="forge-save">Save as new version</button>
       </div>
+      <form class="forge-save-form" id="forge-save-form" hidden>
+        <label class="forge-field forge-field-grow">
+          <span class="lbl">Version name</span>
+          <input class="sel" type="text" id="forge-save-name" aria-label="Version name" required autocomplete="off" spellcheck="false">
+        </label>
+        <label class="forge-field forge-field-grow">
+          <span class="lbl">Notes (optional)</span>
+          <input class="sel" type="text" id="forge-save-notes" aria-label="Notes" autocomplete="off">
+        </label>
+        <div class="forge-save-actions">
+          <button type="submit" class="btn" id="forge-save-confirm">Save</button>
+          <button type="button" class="link" id="forge-save-cancel">Cancel</button>
+        </div>
+      </form>
       <span class="forge-meta" id="forge-meta"></span>
 
       <textarea id="forge-prompt" aria-label="Prompt" rows="8" spellcheck="false"></textarea>
@@ -40,12 +53,21 @@
           <span class="lbl">Pilot set</span>
           <select class="sel" id="forge-pilot-set" aria-label="Pilot set"></select>
         </label>
+        <label class="forge-field forge-mode-field">
+          <span class="lbl">Mode</span>
+          <select class="sel" id="forge-pilot-mode" aria-label="Pilot mode">
+            <option value="classifier" selected>Classifier only</option>
+            <option value="full">Classifier + evaluator</option>
+          </select>
+        </label>
         <input type="file" id="forge-upload" accept="application/json,.json" hidden>
         <button type="button" class="btn" id="forge-run">Run pilot</button>
       </div>
       <p class="forge-pilot-hint" id="forge-pilot-hint" hidden>
         Run pilot and Promote apply to the Classifier role.
       </p>
+      <p class="forge-status" id="forge-status" hidden role="status" aria-live="polite"></p>
+      <p class="forge-error" id="forge-error" hidden></p>
     </div>
 
     <section class="forge-result" aria-label="Pilot result" id="forge-result" hidden>
@@ -87,19 +109,19 @@
               <td>Accuracy</td>
               <td id="forge-acc-active">—</td>
               <td id="forge-acc-candidate">—</td>
-              <td><input class="th" id="forge-gate-accuracy" aria-label="Accuracy gate" value="—"></td>
+              <td><input class="th" id="forge-gate-accuracy" aria-label="Accuracy gate" value="" placeholder="—"></td>
             </tr>
             <tr>
               <td>Precision</td>
               <td id="forge-prec-active">—</td>
               <td id="forge-prec-candidate">—</td>
-              <td><input class="th" id="forge-gate-precision" aria-label="Precision gate" value="—"></td>
+              <td><input class="th" id="forge-gate-precision" aria-label="Precision gate" value="" placeholder="—"></td>
             </tr>
             <tr>
               <td>Recall</td>
               <td id="forge-rec-active">—</td>
               <td id="forge-rec-candidate">—</td>
-              <td><input class="th" id="forge-gate-recall" aria-label="Recall gate" value="—"></td>
+              <td><input class="th" id="forge-gate-recall" aria-label="Recall gate" value="" placeholder="—"></td>
             </tr>
             <tr>
               <td>F1</td>
@@ -149,9 +171,6 @@
         </div>
       </div>
     </section>
-
-    <p class="forge-status" id="forge-status" hidden></p>
-    <p class="forge-error" id="forge-error" hidden></p>
   </div>
 {% endblock %}
 {% block scripts %}
