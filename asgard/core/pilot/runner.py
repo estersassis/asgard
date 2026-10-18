@@ -6,12 +6,12 @@ import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from asgard.core.classification import classify
-from asgard.core.events import Event
+from asgard.core.events import ClassifyProgress, Event
 from asgard.core.pilot.gate import GateResult, GateThresholds, evaluate_gates
 from asgard.core.pilot.set import PilotSet, load_pilot_set
 from asgard.core.pilot.statistics import Confusion, PilotMetrics, compute_metrics
@@ -25,6 +25,30 @@ from asgard.providers.models import LLMSettings, RoleSpec
 _CAUGHT = (ProviderError, ValueError, ValidationError, TypeError)
 
 _DEFAULT_MAX_ITERATIONS = 3
+
+PilotMode = Literal["classifier", "full"]
+PilotPhase = Literal["active", "candidate", "candidate_single_pass", "writing"]
+
+_PHASE_LABELS: dict[PilotPhase, str] = {
+    "active": "Active prompt",
+    "candidate": "Candidate prompt",
+    "candidate_single_pass": "Candidate single-pass",
+    "writing": "Writing metrics",
+}
+
+
+class PilotProgress(BaseModel):
+    """Live progress for a pilot run (per phase and overall)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phase: PilotPhase
+    phase_label: str
+    done: int
+    total: int
+    overall_done: int
+    overall_total: int
+    message: str
 
 
 class PilotPrediction(BaseModel):
@@ -46,6 +70,7 @@ class PilotResult(BaseModel):
 
     run_id: str
     pilot_set_id: str
+    mode: PilotMode = "full"
     active_prompt: str
     candidate_prompt: str
     active: PilotMetrics
@@ -68,15 +93,22 @@ def run_pilot(
     thresholds: GateThresholds | None = None,
     output_dir: Path | None = None,
     emit: Callable[[Event], None] | None = None,
+    mode: PilotMode = "full",
+    on_progress: Callable[[PilotProgress], None] | None = None,
 ) -> PilotResult:
     """Compare active vs candidate prompts on a pilot set (temperature forced to 0).
 
-    Runs the full evaluator-optimizer loop for both prompts, then a single-pass
-    ``classify()`` (no evaluator) for the candidate. Writes ``metrics.json`` and
-    ``predictions.jsonl`` under ``output_dir`` (default ``runs/_pilot/<stamp>/``).
+    ``mode="full"`` runs the evaluator-optimizer loop for both prompts, then a
+    single-pass ``classify()`` (no evaluator) for the candidate.
+
+    ``mode="classifier"`` runs single-pass ``classify()`` only for both prompts
+    (no evaluator). Writes ``metrics.json`` and ``predictions.jsonl`` under
+    ``output_dir`` (default ``runs/_pilot/<stamp>/``).
     """
     if max_iterations < 1:
         raise ValueError("max_iterations must be >= 1")
+    if mode not in ("classifier", "full"):
+        raise ValueError("mode must be 'classifier' or 'full'")
 
     loaded = pilot_set if isinstance(pilot_set, PilotSet) else load_pilot_set(pilot_set)
     active_id = (active or "default").strip() or "default"
@@ -89,6 +121,7 @@ def run_pilot(
     # Fail early if either version is missing.
     registry.get("classifier", active_id)
     registry.get("classifier", candidate_id)
+    active_body = registry.resolve("classifier", active_id)
     candidate_body = registry.resolve("classifier", candidate_id)
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -97,31 +130,55 @@ def run_pilot(
 
     zero_factory = _zero_temperature_factory(factory)
     sink = emit or (lambda _event: None)
+    n = len(loaded.items)
+    report = _progress_reporter(on_progress, item_count=n, mode=mode)
 
-    active_preds = _run_full_loop(
-        loaded,
-        prompt_id=active_id,
-        factory=zero_factory,
-        registry_dir=root,
-        max_iterations=max_iterations,
-        run_dir=out / "active",
-        emit=sink,
-    )
-    candidate_preds = _run_full_loop(
-        loaded,
-        prompt_id=candidate_id,
-        factory=zero_factory,
-        registry_dir=root,
-        max_iterations=max_iterations,
-        run_dir=out / "candidate",
-        emit=sink,
-    )
-    single_preds = _run_single_pass(
-        loaded,
-        system_prompt=candidate_body,
-        factory=zero_factory,
-        emit=sink,
-    )
+    if mode == "classifier":
+        active_preds = _run_single_pass(
+            loaded,
+            system_prompt=active_body,
+            factory=zero_factory,
+            emit=sink,
+            on_item=lambda done, total: report("active", done, total),
+        )
+        candidate_preds = _run_single_pass(
+            loaded,
+            system_prompt=candidate_body,
+            factory=zero_factory,
+            emit=sink,
+            on_item=lambda done, total: report("candidate", done, total),
+        )
+        single_preds = dict(candidate_preds)
+    else:
+        active_preds = _run_full_loop(
+            loaded,
+            prompt_id=active_id,
+            factory=zero_factory,
+            registry_dir=root,
+            max_iterations=max_iterations,
+            run_dir=out / "active",
+            emit=sink,
+            on_item=lambda done, total: report("active", done, total),
+        )
+        candidate_preds = _run_full_loop(
+            loaded,
+            prompt_id=candidate_id,
+            factory=zero_factory,
+            registry_dir=root,
+            max_iterations=max_iterations,
+            run_dir=out / "candidate",
+            emit=sink,
+            on_item=lambda done, total: report("candidate", done, total),
+        )
+        single_preds = _run_single_pass(
+            loaded,
+            system_prompt=candidate_body,
+            factory=zero_factory,
+            emit=sink,
+            on_item=lambda done, total: report("candidate_single_pass", done, total),
+        )
+
+    report("writing", 1, 1)
 
     y_true = [item.label for item in loaded.items]
     pr_ids = [item.pr.context.pr_id for item in loaded.items]
@@ -148,6 +205,7 @@ def run_pilot(
     result = PilotResult(
         run_id=run_id if output_dir is None else out.name,
         pilot_set_id=loaded.id,
+        mode=mode,
         active_prompt=active_id,
         candidate_prompt=candidate_id,
         active=active_metrics,
@@ -162,6 +220,59 @@ def run_pilot(
     return result
 
 
+def _progress_reporter(
+    on_progress: Callable[[PilotProgress], None] | None,
+    *,
+    item_count: int,
+    mode: PilotMode,
+) -> Callable[[PilotPhase, int, int], None]:
+    # Overall counts only PR classifications (not the brief "writing" step).
+    # classifier: active + candidate = 2×N; full: + single-pass = 3×N.
+    if mode == "classifier":
+        pr_phases: tuple[PilotPhase, ...] = ("active", "candidate")
+    else:
+        pr_phases = ("active", "candidate", "candidate_single_pass")
+    overall_total = item_count * len(pr_phases)
+    completed_before = {pr_phases[0]: 0}
+    for index, phase in enumerate(pr_phases[1:], start=1):
+        completed_before[phase] = item_count * index
+    completed_before["writing"] = overall_total
+
+    def report(phase: PilotPhase, done: int, total: int) -> None:
+        if on_progress is None:
+            return
+        capped_total = max(total, 0)
+        capped_done = max(0, min(done, capped_total if capped_total else done))
+        if phase == "writing":
+            overall_done = overall_total
+        else:
+            overall_done = completed_before.get(phase, 0) + capped_done
+            if overall_done > overall_total:
+                overall_done = overall_total
+        label = _PHASE_LABELS.get(phase, phase)
+        if phase == "writing":
+            message = f"Running pilot · {label}"
+        else:
+            message = (
+                f"Running pilot · {label} · {capped_done}/{capped_total} PRs"
+                f" · overall {overall_done}/{overall_total}"
+            )
+        on_progress(
+            PilotProgress(
+                phase=phase,
+                phase_label=label,
+                done=capped_done,
+                total=capped_total,
+                overall_done=overall_done,
+                overall_total=overall_total,
+                message=message,
+            )
+        )
+
+    report(pr_phases[0], 0, item_count)
+    return report
+
+
 def _run_full_loop(
     pilot_set: PilotSet,
     *,
@@ -171,13 +282,26 @@ def _run_full_loop(
     max_iterations: int,
     run_dir: Path,
     emit: Callable[[Event], None],
+    on_item: Callable[[int, int], None] | None = None,
 ) -> dict[str, bool]:
     """Drive :class:`ClassifyStage` / ``_review`` with the selected classifier prompt."""
     run_dir.mkdir(parents=True, exist_ok=True)
     _write_prompt_config(run_dir, classifier=prompt_id, registry_dir=registry_dir)
+    total = len(pilot_set.items)
+    if on_item is not None:
+        on_item(0, total)
+
+    def sink(event: Event) -> None:
+        emit(event)
+        if on_item is None or not isinstance(event, ClassifyProgress):
+            return
+        if event.kind != "pull":
+            return
+        # 1-based index of the PR currently being classified.
+        on_item(min(event.index, event.total), event.total)
 
     stage = ClassifyStage(max_iterations, factory, batch_size=1)
-    ctx = RunContext(run_dir, emit)
+    ctx = RunContext(run_dir, sink)
     pulls = [item.pr for item in pilot_set.items]
     payloads = stage.run(ctx, pulls)
 
@@ -185,6 +309,8 @@ def _run_full_loop(
     for payload in payloads:
         pr_id = str(payload["pr_id"])
         predictions[pr_id] = _decision_from_payload(payload)
+    if on_item is not None:
+        on_item(total, total)
     return predictions
 
 
@@ -194,10 +320,16 @@ def _run_single_pass(
     system_prompt: str,
     factory: LLMFactory,
     emit: Callable[[Event], None],
+    on_item: Callable[[int, int], None] | None = None,
 ) -> dict[str, bool]:
     """One ``classify()`` call per PR — no evaluator."""
     predictions: dict[str, bool] = {}
-    for item in pilot_set.items:
+    total = len(pilot_set.items)
+    if on_item is not None:
+        on_item(0, total)
+    for index, item in enumerate(pilot_set.items, start=1):
+        if on_item is not None:
+            on_item(index, total)
         pr_id = item.pr.context.pr_id
         try:
             result = classify(
@@ -208,8 +340,8 @@ def _run_single_pass(
             )
         except _CAUGHT:
             predictions[pr_id] = False
-            continue
-        predictions[pr_id] = result.has_security_discussion
+        else:
+            predictions[pr_id] = result.has_security_discussion
     return predictions
 
 

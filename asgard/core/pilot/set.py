@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from asgard.core.normalization import NormalizedPullRequest
 
-BUNDLED_SETS = frozenset({"example"})
+BUNDLED_SETS = frozenset({"example", "binary_v2"})
 
 
 class PilotItem(BaseModel):
@@ -36,7 +36,12 @@ def load_pilot_set(source: str | Path) -> PilotSet:
     :class:`~asgard.core.normalization.NormalizedPullRequest`.
     """
     raw = json.loads(_read_text(source))
-    return PilotSet.model_validate(raw)
+    pilot = PilotSet.model_validate(raw)
+    if isinstance(source, str) and source.strip() in BUNDLED_SETS and pilot.id != source.strip():
+        raise ValueError(
+            f"bundled pilot set {source.strip()!r} has mismatched id {pilot.id!r}"
+        )
+    return pilot
 
 
 def _read_text(source: str | Path) -> str:

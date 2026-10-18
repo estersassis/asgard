@@ -10,7 +10,7 @@ import queue
 import tomllib
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
@@ -37,6 +37,7 @@ from asgard.core.prompt_registry import (
 )
 from asgard.prompts.synthesizer import SYSTEM_PROMPT
 from asgard.ui.pilot import PilotSession, PilotStore, promote_from_api
+from asgard.ui.runs import resolve_config_path
 from asgard.ui.session import RunSession, SessionStore
 
 # Allowlisted run-dir files served by the UI (relative to the run output dir).
@@ -129,10 +130,11 @@ class PilotThresholdsBody(BaseModel):
 class StartPilotBody(BaseModel):
     candidate: str
     active: str | None = None
-    pilot_set: str = "example"
+    pilot_set: str = "binary_v2"
     config: Path | None = None
     thresholds: PilotThresholdsBody | None = None
     registry_dir: Path | None = None
+    mode: Literal["classifier", "full"] = "classifier"
 
 
 class PromotePilotBody(BaseModel):
@@ -426,6 +428,7 @@ def create_app(
             pilot_set = pilots.resolve_pilot_set(body.pilot_set)
         except (ValueError, LookupError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        config_path = resolve_config_path(body.config)
         thresholds = None
         if body.thresholds is not None:
             thresholds = GateThresholds.model_validate(body.thresholds.model_dump())
@@ -435,9 +438,10 @@ def create_app(
                 candidate=candidate,
                 active=body.active,
                 pilot_set=pilot_set,
-                config=body.config,
+                config=config_path,
                 thresholds=thresholds,
                 registry_dir=body.registry_dir,
+                mode=body.mode,
             )
         except (ConfigError, LookupError, ValueError) as exc:
             session.status = "error"
@@ -459,6 +463,7 @@ def create_app(
             "running": session.running,
             "output_dir": str(session.output_dir) if session.output_dir else None,
             "error": session.error,
+            "progress": session.progress_snapshot(),
         }
 
     @app.get("/api/pilot/runs/{run_id}/metrics")
@@ -487,7 +492,7 @@ def create_app(
         try:
             return promote_from_api(
                 candidate=candidate,
-                config=body.config,
+                config=resolve_config_path(body.config),
                 from_result=body.from_result,
                 role=body.role,
                 root=pilots.root,
