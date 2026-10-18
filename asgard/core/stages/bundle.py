@@ -11,8 +11,13 @@ from typing import Any
 from pydantic import ValidationError
 
 from asgard.core.config import ConfigError
-from asgard.core.prompt_registry import resolve_system_prompt
+from asgard.core.prompt_registry import (
+    resolve_map_prompt,
+    resolve_reduce_prompt,
+    resolve_system_prompt,
+)
 from asgard.core.stage import RunContext, Stage
+from asgard.prompts.synthesizer import fill_repository
 from asgard.providers.models import LLMSettings
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
@@ -111,18 +116,24 @@ def _prompts(config: dict[str, Any] | None, run_dir: Path) -> dict[str, str | No
         evaluator = _sha(resolve_system_prompt("evaluator", config, run_dir))
     except LookupError as exc:
         raise ConfigError(str(exc)) from None
-    synthesizer = None
+    synthesizer_map = None
+    synthesizer_reduce = None
     repo = config.get("repo") if config else None
     if isinstance(repo, str) and repo:
         try:
-            prompt = resolve_system_prompt("synthesizer", config, run_dir)
+            map_prompt = resolve_map_prompt(config, run_dir)
+            reduce_prompt = resolve_reduce_prompt(config, run_dir)
         except LookupError as exc:
             raise ConfigError(str(exc)) from None
-        synthesizer = _sha(prompt.format(repository=repo))
+        synthesizer_map = _sha(fill_repository(map_prompt, repo))
+        synthesizer_reduce = _sha(fill_repository(reduce_prompt, repo))
     return {
         "classifier": classifier,
         "evaluator": evaluator,
-        "synthesizer": synthesizer,
+        "synthesizer_map": synthesizer_map,
+        "synthesizer_reduce": synthesizer_reduce,
+        # Legacy alias: reduce prompt (Forge "synthesizer" role).
+        "synthesizer": synthesizer_reduce,
     }
 
 

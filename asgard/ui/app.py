@@ -36,7 +36,7 @@ from asgard.core.prompt_registry import (
     adapt_prompt_body,
     default_registry_root,
 )
-from asgard.prompts.synthesizer import SYSTEM_PROMPT
+from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT
 from asgard.ui.pilot import PilotSession, PilotStore, promote_from_api
 from asgard.ui.runs import resolve_config_path
 from asgard.ui.session import RunSession, SessionStore
@@ -54,7 +54,9 @@ _RUN_FILE_CLASSIFY_ITEMS = "classify/items.jsonl"
 _RUN_FILE_SECURITY_MD = "SECURITY.md"
 _RUN_FILE_CONSOLIDATE_OUTPUT = "consolidate/output.json"
 _RUN_FILE_SECURITY_MD_OUTPUT = "security_md/output.json"
-_RUN_FILE_SYNTHESIZE_PROMPT = "synthesize/system_prompt.txt"
+_RUN_FILE_SYNTHESIZE_MAP_PROMPT = "synthesize/map_prompt.txt"
+_RUN_FILE_SYNTHESIZE_REDUCE_PROMPT = "synthesize/reduce_prompt.txt"
+_RUN_FILE_SYNTHESIZE_PROMPT = "synthesize/system_prompt.txt"  # legacy reduce
 
 _UI_ROOT = Path(__file__).resolve().parent
 _ENV_PREFILL = (
@@ -105,12 +107,19 @@ class RetryClassifyBody(BaseModel):
 class RegenerateBody(BaseModel):
     from_stage: str = Field(default="synthesize", alias="from")
     prompt: str | None = None
+    map_prompt: str | None = None
+    reduce_prompt: str | None = None
 
     model_config = {"populate_by_name": True}
 
 
 class PromptBody(BaseModel):
     text: str
+
+
+class SynthesizePromptsBody(BaseModel):
+    map: str
+    reduce: str
 
 
 class PromptSaveBody(BaseModel):
@@ -209,14 +218,29 @@ def create_app(
             raise HTTPException(status_code=404, detail="file not found")
         return FileResponse(path, media_type=media_type, filename=filename)
 
-    def _prompt_path(session: RunSession) -> Path:
+    def _synthesize_prompt_path(session: RunSession, relative: str) -> Path:
         if session.output_dir is None:
             raise HTTPException(status_code=404, detail="file not found")
         root = session.output_dir.resolve()
-        path = (root / _RUN_FILE_SYNTHESIZE_PROMPT).resolve()
+        path = (root / relative).resolve()
         if not path.is_relative_to(root):
             raise HTTPException(status_code=404, detail="file not found")
         return path
+
+    def _read_map_prompt(session: RunSession) -> str:
+        path = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_MAP_PROMPT)
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+        return MAP_PROMPT
+
+    def _read_reduce_prompt(session: RunSession) -> str:
+        reduce_path = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_REDUCE_PROMPT)
+        if reduce_path.is_file():
+            return reduce_path.read_text(encoding="utf-8")
+        legacy = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_PROMPT)
+        if legacy.is_file():
+            return legacy.read_text(encoding="utf-8")
+        return REDUCE_PROMPT
 
     def _prompt_registry(registry_dir: Path | None = None) -> PromptRegistry:
         return PromptRegistry(registry_dir or default_registry_root())
@@ -553,7 +577,12 @@ def create_app(
             raise HTTPException(status_code=400, detail=f"unknown stage: {body.from_stage}")
         try:
             session.join(timeout=30)
-            output_dir = session.regenerate_from(body.from_stage, prompt=body.prompt)
+            output_dir = session.regenerate_from(
+                body.from_stage,
+                prompt=body.prompt,
+                map_prompt=body.map_prompt,
+                reduce_prompt=body.reduce_prompt,
+            )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         run_id = store.bind_stable_id(session)
@@ -641,6 +670,41 @@ def create_app(
             "application/json",
         )
 
+    @app.get("/api/runs/{run_id}/prefilter/titles")
+    async def run_prefilter_titles(run_id: str) -> list[dict[str, str]]:
+        """Slim pr_id → title map for the Council list (avoids shipping full pulls)."""
+        session = _session_or_404(run_id)
+        if session.output_dir is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        root = session.output_dir.resolve()
+        path = (root / _RUN_FILE_PREFILTER_OUTPUT).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=404, detail="file not found") from None
+        if not isinstance(raw, list):
+            raise HTTPException(status_code=404, detail="file not found")
+        titles: list[dict[str, str]] = []
+        for pull in raw:
+            if not isinstance(pull, dict):
+                continue
+            context = pull.get("context")
+            if not isinstance(context, dict):
+                continue
+            pr_id = context.get("pr_id")
+            title = context.get("title")
+            if not isinstance(pr_id, str) or not pr_id:
+                continue
+            titles.append(
+                {
+                    "pr_id": pr_id,
+                    "title": title if isinstance(title, str) else "",
+                }
+            )
+        return titles
+
     @app.get("/api/runs/{run_id}/mine/output")
     async def run_mine_output(run_id: str) -> FileResponse:
         return _run_file(
@@ -727,6 +791,35 @@ def create_app(
             "text/plain",
         )
 
+    @app.get("/api/runs/{run_id}/classify/index")
+    async def run_classify_index(run_id: str) -> list[dict[str, Any]]:
+        """Per-PR classify summary without traces (Council list / totals)."""
+        session = _session_or_404(run_id)
+        if session.output_dir is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        root = session.output_dir.resolve()
+        path = (root / _RUN_FILE_CLASSIFY_ITEMS).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        return _classify_index_rows(path)
+
+    @app.get("/api/runs/{run_id}/classify/items/{pr_id}")
+    async def run_classify_item(run_id: str, pr_id: str) -> dict[str, Any]:
+        """Full classify payload for one pull request (deliberation timeline)."""
+        if not pr_id or "/" in pr_id or "\\" in pr_id or pr_id in {".", ".."}:
+            raise HTTPException(status_code=404, detail="file not found")
+        session = _session_or_404(run_id)
+        if session.output_dir is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        root = session.output_dir.resolve()
+        path = (root / _RUN_FILE_CLASSIFY_ITEMS).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        payload = _classify_item_payload(path, pr_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        return payload
+
     @app.get("/api/runs/{run_id}/SECURITY.md")
     async def run_security_md(run_id: str) -> FileResponse:
         return _run_file(
@@ -752,20 +845,49 @@ def create_app(
             "application/json",
         )
 
+    @app.get("/api/runs/{run_id}/synthesize/prompts")
+    async def run_synthesize_prompts(run_id: str) -> dict[str, str]:
+        session = _session_or_404(run_id)
+        return {"map": _read_map_prompt(session), "reduce": _read_reduce_prompt(session)}
+
+    @app.put("/api/runs/{run_id}/synthesize/prompts")
+    async def put_synthesize_prompts(
+        run_id: str, body: SynthesizePromptsBody
+    ) -> dict[str, str]:
+        session = _session_or_404(run_id)
+        map_path = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_MAP_PROMPT)
+        reduce_path = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_REDUCE_PROMPT)
+        map_path.parent.mkdir(parents=True, exist_ok=True)
+        map_path.write_text(body.map, encoding="utf-8")
+        reduce_path.write_text(body.reduce, encoding="utf-8")
+        legacy = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_PROMPT)
+        if legacy.is_file():
+            legacy.unlink()
+        return {
+            "map": _RUN_FILE_SYNTHESIZE_MAP_PROMPT,
+            "reduce": _RUN_FILE_SYNTHESIZE_REDUCE_PROMPT,
+        }
+
     @app.get("/api/runs/{run_id}/synthesize/prompt")
     async def run_synthesize_prompt(run_id: str) -> PlainTextResponse:
+        """Legacy: returns the reduce prompt as plain text."""
         session = _session_or_404(run_id)
-        path = _prompt_path(session)
-        text = path.read_text(encoding="utf-8") if path.is_file() else SYSTEM_PROMPT
-        return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+        return PlainTextResponse(
+            _read_reduce_prompt(session),
+            media_type="text/plain; charset=utf-8",
+        )
 
     @app.put("/api/runs/{run_id}/synthesize/prompt")
     async def put_synthesize_prompt(run_id: str, body: PromptBody) -> dict[str, str]:
+        """Legacy: writes the reduce prompt only."""
         session = _session_or_404(run_id)
-        path = _prompt_path(session)
+        path = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_REDUCE_PROMPT)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body.text, encoding="utf-8")
-        return {"path": _RUN_FILE_SYNTHESIZE_PROMPT}
+        legacy = _synthesize_prompt_path(session, _RUN_FILE_SYNTHESIZE_PROMPT)
+        if legacy.is_file():
+            legacy.unlink()
+        return {"path": _RUN_FILE_SYNTHESIZE_REDUCE_PROMPT}
 
     @app.get("/api/runs/{run_id}/bundle.zip")
     async def run_bundle_zip(run_id: str) -> Response:
@@ -789,6 +911,91 @@ def create_app(
         )
 
     return app
+
+
+def _classify_index_rows(path: Path) -> list[dict[str, Any]]:
+    """Last checkpoint per pr_id, without traces."""
+    latest: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            pr_id = payload.get("pr_id")
+            if not isinstance(pr_id, str) or not pr_id:
+                row_id = row.get("id")
+                pr_id = row_id if isinstance(row_id, str) and row_id else ""
+            if not pr_id:
+                continue
+            classification = payload.get("classification")
+            has_security: bool | None = None
+            if isinstance(classification, dict):
+                flag = classification.get("has_security_discussion")
+                if isinstance(flag, bool):
+                    has_security = flag
+            slim: dict[str, Any] = {
+                "pr_id": pr_id,
+                "status": payload.get("status"),
+                "iterations": payload.get("iterations"),
+                "has_security_discussion": has_security,
+            }
+            if payload.get("status") == "error":
+                error = _error_from_traces(payload.get("traces"))
+                if error:
+                    slim["error"] = error
+            if pr_id not in latest:
+                order.append(pr_id)
+            latest[pr_id] = slim
+    return [latest[pr_id] for pr_id in order]
+
+
+def _classify_item_payload(path: Path, pr_id: str) -> dict[str, Any] | None:
+    """Return the latest classify payload for ``pr_id``, or None."""
+    found: dict[str, Any] | None = None
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            row_pr = payload.get("pr_id")
+            if not isinstance(row_pr, str) or not row_pr:
+                row_id = row.get("id")
+                row_pr = row_id if isinstance(row_id, str) else ""
+            if row_pr != pr_id:
+                continue
+            found = payload
+    return found
+
+
+def _error_from_traces(traces: Any) -> str:
+    if not isinstance(traces, list):
+        return ""
+    for entry in traces:
+        if not isinstance(entry, dict):
+            continue
+        error = entry.get("error")
+        if isinstance(error, str) and error:
+            return error
+    return ""
 
 
 def serve(*, host: str = "127.0.0.1", port: int = 8000) -> None:

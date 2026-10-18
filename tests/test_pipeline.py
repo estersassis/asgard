@@ -19,11 +19,17 @@ def _write(path: Path, text: str = "x\n") -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def test_clear_from_removes_later_stages_but_keeps_prompt(tmp_path: Path) -> None:
+def test_clear_from_removes_later_stages_but_keeps_prompts(tmp_path: Path) -> None:
     for name in PIPELINE:
         _write(tmp_path / name / "output.json", f'"{name}"\n')
-    prompt = "Keep {repository}."
-    _write(tmp_path / "synthesize" / "system_prompt.txt", prompt)
+    map_prompt = "Keep map {repository}."
+    reduce_prompt = "Keep reduce {repository}."
+    legacy = "Keep legacy {repository}."
+    map_rules = '[{"pr_id": "1", "artifact": "x", "rule": "Do y.", "risk": "Z."}]\n'
+    _write(tmp_path / "synthesize" / "map_prompt.txt", map_prompt)
+    _write(tmp_path / "synthesize" / "reduce_prompt.txt", reduce_prompt)
+    _write(tmp_path / "synthesize" / "system_prompt.txt", legacy)
+    _write(tmp_path / "synthesize" / "map.json", map_rules)
     _write(tmp_path / "SECURITY.md", "guideline\n")
     _write(tmp_path / "manifest.json", "{}\n")
     _write(tmp_path / "consolidate" / "output.json", "[]\n")
@@ -36,9 +42,12 @@ def test_clear_from_removes_later_stages_but_keeps_prompt(tmp_path: Path) -> Non
     assert not (tmp_path / "bundle").exists()
     assert not (tmp_path / "SECURITY.md").exists()
     assert not (tmp_path / "manifest.json").exists()
-    kept = tmp_path / "synthesize" / "system_prompt.txt"
-    assert kept.is_file()
-    assert kept.read_text(encoding="utf-8") == prompt
+    assert (tmp_path / "synthesize" / "map_prompt.txt").read_text(encoding="utf-8") == map_prompt
+    assert (
+        tmp_path / "synthesize" / "reduce_prompt.txt"
+    ).read_text(encoding="utf-8") == reduce_prompt
+    assert (tmp_path / "synthesize" / "system_prompt.txt").read_text(encoding="utf-8") == legacy
+    assert (tmp_path / "synthesize" / "map.json").read_text(encoding="utf-8") == map_rules
 
 
 def test_clear_from_rejects_unknown_stage(tmp_path: Path) -> None:

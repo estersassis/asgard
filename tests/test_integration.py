@@ -136,6 +136,18 @@ def _handler(security: int) -> FakeHandler:
         }
     )
     verdict = json.dumps({"verdict": "APPROVE", "findings": _findings(), "feedback": ""})
+    mapped = json.dumps(
+        {
+            "rules": [
+                {
+                    "pr_id": str(security),
+                    "artifact": "algorithm allow-list",
+                    "rule": "Keep the algorithm allow-list a sequence.",
+                    "risk": "A bare string can bypass the allow-list.",
+                }
+            ]
+        }
+    )
     synthesis = json.dumps(
         {
             "topics": [
@@ -152,7 +164,7 @@ def _handler(security: int) -> FakeHandler:
             ]
         }
     )
-    return FakeHandler([approved, verdict, rejected, verdict, synthesis])
+    return FakeHandler([approved, verdict, rejected, verdict, mapped, synthesis])
 
 
 def test_recorded_fixtures_produce_security_md(

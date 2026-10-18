@@ -21,7 +21,7 @@ from asgard.core.orchestrator import Orchestrator
 from asgard.core.pilot.set import load_pilot_set
 from asgard.core.prompt_registry import PromptRegistry, content_sha256, resolve_system_prompt
 from asgard.core.stage import CancelledError, RunContext, Stage
-from asgard.prompts.synthesizer import SYSTEM_PROMPT
+from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT
 from asgard.providers.handlers.fake import FakeHandler
 from asgard.ui.app import create_app
 from asgard.ui.sink import UISink
@@ -135,6 +135,21 @@ def _findings() -> list[dict[str, object]]:
     ]
 
 
+def _map_rules(security: int) -> str:
+    return json.dumps(
+        {
+            "rules": [
+                {
+                    "pr_id": str(security),
+                    "artifact": "algorithm allow-list",
+                    "rule": "Keep the algorithm allow-list a sequence.",
+                    "risk": "A bare string can bypass the allow-list.",
+                }
+            ]
+        }
+    )
+
+
 def _handler(security: int) -> FakeHandler:
     approved = json.dumps(
         {
@@ -167,7 +182,7 @@ def _handler(security: int) -> FakeHandler:
             ]
         }
     )
-    return FakeHandler([approved, verdict, rejected, verdict, synthesis])
+    return FakeHandler([approved, verdict, rejected, verdict, _map_rules(security), synthesis])
 
 
 def _settings(directory: Path, out: Path) -> Path:
@@ -367,6 +382,7 @@ def test_pipeline_page_assets() -> None:
     assert "/council?run=" in js.text
     assert "startedAt" in js.text
     assert "formatElapsed" in js.text
+    assert "err.stage !== event.stage" in js.text
 
 
 def test_nav_preserves_run_query() -> None:
@@ -407,6 +423,9 @@ def test_council_page_assets() -> None:
     assert 'aria-label="Pull requests"' in page.text
     assert 'aria-label="Status filter"' in page.text
     assert 'id="council-pr-list"' in page.text
+    assert 'id="council-pager"' in page.text
+    assert 'id="council-page-prev"' in page.text
+    assert 'id="council-page-next"' in page.text
     assert 'aria-label="Deliberation"' in page.text
     assert 'data-theme="light"' not in page.text
     assert not _TOKEN_HEX.search(page.text)
@@ -424,6 +443,7 @@ def test_council_page_assets() -> None:
     assert "1080px" in css.text
     assert ".pr" in css.text
     assert ".council-filter" in css.text
+    assert ".council-pager" in css.text
     assert ".dot" in css.text
     assert ".dot.live" in css.text
     assert "@keyframes pulse" in css.text
@@ -439,12 +459,12 @@ def test_council_page_assets() -> None:
     assert "LoopFinished" in js.text
     assert "STATUS_FILTERS" in js.text
     assert "statusFilter" in js.text
-    assert "/classify/trace" in js.text
+    assert "PAGE_SIZE" in js.text
     assert "/classify/metrics" in js.text
-    assert "/classify/output" in js.text
-    assert "/classify/items" in js.text
+    assert "/classify/index" in js.text
+    assert "/classify/items/" in js.text
     assert "/classify/retry" in js.text
-    assert "/prefilter/output" in js.text
+    assert "/prefilter/titles" in js.text
     assert "/mine/index" in js.text
     assert '"why"' in js.text or "why" in js.text
     assert '"hide"' in js.text or "hide" in js.text
@@ -466,12 +486,15 @@ def test_guideline_page_assets() -> None:
     assert 'id="guideline-edit"' in page.text
     assert 'id="guideline-bundle"' in page.text
     assert 'id="guideline-download"' in page.text
-    assert 'id="guideline-prompt"' in page.text
+    assert 'id="guideline-map-prompt"' in page.text
+    assert 'id="guideline-reduce-prompt"' in page.text
     assert 'id="guideline-regenerate"' in page.text
     assert 'id="guideline-preview"' in page.text
     assert 'class="ms"' in page.text
     assert "SECURITY.md" in page.text
-    assert "Edit prompt" in page.text
+    assert "Edit prompts" in page.text
+    assert "Map prompt" in page.text
+    assert "Reduce prompt" in page.text
     assert "Regenerate" in page.text
     assert 'data-theme="light"' not in page.text
     assert not _TOKEN_HEX.search(page.text)
@@ -496,7 +519,9 @@ def test_guideline_page_assets() -> None:
     assert "/SECURITY.md" in js.text
     assert "/consolidate/output" in js.text
     assert "/security_md/output" in js.text
-    assert "/synthesize/prompt" in js.text
+    assert "/synthesize/prompts" in js.text
+    assert "map_prompt" in js.text
+    assert "reduce_prompt" in js.text
     assert "/regenerate" in js.text
     assert "/bundle.zip" in js.text
     assert "unknown_citations" in js.text
@@ -927,6 +952,32 @@ def test_council_file_endpoints(
     assert "text/plain" in api_items.headers.get("content-type", "")
     assert api_items.text == disk_items
 
+    api_index = client.get(f"/api/runs/{run_id}/classify/index")
+    assert api_index.status_code == 200
+    index = api_index.json()
+    assert isinstance(index, list) and index
+    assert {"pr_id", "status", "has_security_discussion"} <= set(index[0])
+    assert "traces" not in index[0]
+    assert "classification" not in index[0]
+    first_pr = index[0]["pr_id"]
+    api_item = client.get(f"/api/runs/{run_id}/classify/items/{first_pr}")
+    assert api_item.status_code == 200
+    assert api_item.json()["pr_id"] == first_pr
+    assert "traces" in api_item.json()
+    missing_item = client.get(f"/api/runs/{run_id}/classify/items/missing-pr")
+    assert missing_item.status_code == 404
+
+    disk_prefilter_titles = [
+        {
+            "pr_id": pull["context"]["pr_id"],
+            "title": pull["context"].get("title", ""),
+        }
+        for pull in disk_prefilter
+    ]
+    api_titles = client.get(f"/api/runs/{run_id}/prefilter/titles")
+    assert api_titles.status_code == 200
+    assert api_titles.json() == disk_prefilter_titles
+
     disk_metrics = json.loads((out / "classify" / "metrics.json").read_text(encoding="utf-8"))
     api_metrics = client.get(f"/api/runs/{run_id}/classify/metrics")
     assert api_metrics.status_code == 200
@@ -994,25 +1045,30 @@ def test_guideline_file_endpoints_and_prompt(
     assert api_security_md.json() == disk_security_md
     assert "unknown_citations" in api_security_md.json()
 
-    prompt_get = client.get(f"/api/runs/{run_id}/synthesize/prompt")
-    assert prompt_get.status_code == 200
-    assert "text/plain" in prompt_get.headers.get("content-type", "")
-    assert prompt_get.text == SYSTEM_PROMPT
-    assert not (out / "synthesize" / "system_prompt.txt").exists()
+    prompts_get = client.get(f"/api/runs/{run_id}/synthesize/prompts")
+    assert prompts_get.status_code == 200
+    assert prompts_get.json() == {"map": MAP_PROMPT, "reduce": REDUCE_PROMPT}
+    assert not (out / "synthesize" / "map_prompt.txt").exists()
+    assert not (out / "synthesize" / "reduce_prompt.txt").exists()
 
-    override = "Custom guideline for {repository}."
+    map_override = "Custom map for {repository}."
+    reduce_override = "Custom reduce for {repository}."
     put = client.put(
-        f"/api/runs/{run_id}/synthesize/prompt",
-        json={"text": override},
+        f"/api/runs/{run_id}/synthesize/prompts",
+        json={"map": map_override, "reduce": reduce_override},
     )
     assert put.status_code == 200, put.text
-    assert put.json()["path"] == "synthesize/system_prompt.txt"
-    saved = out / "synthesize" / "system_prompt.txt"
-    assert saved.is_file()
-    assert saved.read_text(encoding="utf-8") == override
-    prompt_again = client.get(f"/api/runs/{run_id}/synthesize/prompt")
-    assert prompt_again.status_code == 200
-    assert prompt_again.text == override
+    assert put.json() == {
+        "map": "synthesize/map_prompt.txt",
+        "reduce": "synthesize/reduce_prompt.txt",
+    }
+    assert (out / "synthesize" / "map_prompt.txt").read_text(encoding="utf-8") == map_override
+    assert (
+        out / "synthesize" / "reduce_prompt.txt"
+    ).read_text(encoding="utf-8") == reduce_override
+    prompts_again = client.get(f"/api/runs/{run_id}/synthesize/prompts")
+    assert prompts_again.status_code == 200
+    assert prompts_again.json() == {"map": map_override, "reduce": reduce_override}
 
     bundle = client.get(f"/api/runs/{run_id}/bundle.zip")
     assert bundle.status_code == 200
@@ -1078,7 +1134,9 @@ def test_guideline_regenerate_skips_classify(
             verdict,
             rejected,
             verdict,
+            _map_rules(security),
             _synthesis(security, title="Authentication"),
+            _map_rules(security),
             _synthesis(security, title="Regenerated auth"),
         ]
     )
@@ -1095,21 +1153,26 @@ def test_guideline_regenerate_skips_classify(
     status = _wait_done(client, run_id)
     assert status["error"] is None
     calls_before = len(handler.calls)
-    assert calls_before == 5
+    assert calls_before == 6
     events_before = len(_events(out / "events.jsonl"))
     md_before = (out / "SECURITY.md").read_text(encoding="utf-8")
     assert "Authentication" in md_before
 
-    override = "Regenerate {repository} with a fresh prompt."
+    map_override = "Regenerate map {repository}."
+    reduce_override = "Regenerate reduce {repository}."
     put = client.put(
-        f"/api/runs/{run_id}/synthesize/prompt",
-        json={"text": override},
+        f"/api/runs/{run_id}/synthesize/prompts",
+        json={"map": map_override, "reduce": reduce_override},
     )
     assert put.status_code == 200, put.text
 
     regenerated = client.post(
         f"/api/runs/{run_id}/regenerate",
-        json={"from": "synthesize", "prompt": override},
+        json={
+            "from": "synthesize",
+            "map_prompt": map_override,
+            "reduce_prompt": reduce_override,
+        },
     )
     assert regenerated.status_code == 200, regenerated.text
     status = _wait_done(client, run_id)
@@ -1132,15 +1195,21 @@ def test_guideline_regenerate_skips_classify(
     } in new_events
 
     new_calls = handler.calls[calls_before:]
-    assert len(new_calls) == 1
-    assert new_calls[0][0].content == override.format(repository="jpadilla/pyjwt")
+    assert len(new_calls) == 2
+    assert new_calls[0][0].content == map_override.replace("{repository}", "jpadilla/pyjwt")
+    assert new_calls[1][0].content == reduce_override.replace(
+        "{repository}", "jpadilla/pyjwt"
+    )
 
     disk_md = (out / "SECURITY.md").read_text(encoding="utf-8")
     assert "Regenerated auth" in disk_md
     api_md = client.get(f"/api/runs/{run_id}/SECURITY.md")
     assert api_md.status_code == 200
     assert api_md.text == disk_md
-    assert (out / "synthesize" / "system_prompt.txt").read_text(encoding="utf-8") == override
+    assert (out / "synthesize" / "map_prompt.txt").read_text(encoding="utf-8") == map_override
+    assert (
+        out / "synthesize" / "reduce_prompt.txt"
+    ).read_text(encoding="utf-8") == reduce_override
 
 
 def test_stop_and_resume_from_stage(

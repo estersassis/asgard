@@ -13,7 +13,8 @@
     bundle: document.getElementById("guideline-bundle"),
     download: document.getElementById("guideline-download"),
     promptPanel: document.getElementById("guideline-prompt-panel"),
-    prompt: document.getElementById("guideline-prompt"),
+    mapPrompt: document.getElementById("guideline-map-prompt"),
+    reducePrompt: document.getElementById("guideline-reduce-prompt"),
     reuse: document.getElementById("guideline-reuse"),
     regenerate: document.getElementById("guideline-regenerate"),
     empty: document.getElementById("guideline-empty"),
@@ -29,7 +30,8 @@
     consolidate: [],
     unknown: {},
     repo: "",
-    prompt: "",
+    mapPrompt: "",
+    reducePrompt: "",
     regenerating: false,
   };
 
@@ -246,7 +248,7 @@
     els.reuse.textContent =
       "Reuses the " + n + " approved PR" + (n === 1 ? "" : "s") + ". No classification is repeated.";
 
-    els.edit.textContent = state.editing ? "Close prompt" : "Edit prompt";
+    els.edit.textContent = state.editing ? "Close prompts" : "Edit prompts";
     els.edit.setAttribute("aria-expanded", state.editing ? "true" : "false");
     els.promptPanel.hidden = !state.editing;
 
@@ -280,25 +282,16 @@
       api("/consolidate/output"),
       api("/security_md/output"),
       api("/config"),
-      api("/synthesize/prompt"),
+      api("/synthesize/prompts"),
     ]).then(function (results) {
       var md = results[0];
       var consolidate = results[1];
       var securityMd = results[2];
       var config = results[3];
-      var prompt = results[4];
+      var prompts = results[4];
 
-      if (!md.ok) {
-        els.empty.hidden = false;
-        els.empty.textContent =
-          md.status === 404
-            ? "SECURITY.md is not ready for this run yet."
-            : "Could not load SECURITY.md.";
-        return;
-      }
-
-      state.markdown = md.text || "";
-      state.consolidate = consolidate.ok && Array.isArray(consolidate.body) ? consolidate.body : [];
+      state.consolidate =
+        consolidate.ok && Array.isArray(consolidate.body) ? consolidate.body : [];
       state.unknown = {};
       if (securityMd.ok && securityMd.body && Array.isArray(securityMd.body.unknown_citations)) {
         securityMd.body.unknown_citations.forEach(function (id) {
@@ -307,9 +300,36 @@
       }
       state.repo =
         config.ok && config.body && typeof config.body.repo === "string" ? config.body.repo : "";
-      state.prompt = prompt.ok ? prompt.text || "" : "";
-      els.prompt.value = state.prompt;
+      if (prompts.ok && prompts.body && typeof prompts.body === "object") {
+        state.mapPrompt =
+          typeof prompts.body.map === "string" ? prompts.body.map : "";
+        state.reducePrompt =
+          typeof prompts.body.reduce === "string" ? prompts.body.reduce : "";
+      } else {
+        state.mapPrompt = "";
+        state.reducePrompt = "";
+      }
+      if (state.editing || !els.mapPrompt.value) {
+        els.mapPrompt.value = state.mapPrompt;
+      }
+      if (state.editing || !els.reducePrompt.value) {
+        els.reducePrompt.value = state.reducePrompt;
+      }
 
+      if (!md.ok) {
+        state.markdown = "";
+        els.empty.hidden = false;
+        els.empty.textContent =
+          md.status === 404
+            ? "SECURITY.md is not ready for this run yet."
+            : "Could not load SECURITY.md.";
+        updateChrome();
+        setError("");
+        return;
+      }
+
+      state.markdown = md.text || "";
+      els.empty.hidden = true;
       updateChrome();
       renderPreview();
       setError("");
@@ -336,11 +356,16 @@
     setStatus("Regenerating from synthesize…");
     updateChrome();
 
-    var text = els.prompt.value;
+    var mapText = els.mapPrompt.value;
+    var reduceText = els.reducePrompt.value;
     api("/regenerate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: "synthesize", prompt: text }),
+      body: JSON.stringify({
+        from: "synthesize",
+        map_prompt: mapText,
+        reduce_prompt: reduceText,
+      }),
     })
       .then(function (result) {
         if (!result.ok) {
@@ -354,7 +379,8 @@
         if (status.body && status.body.error) {
           throw new Error(status.body.error);
         }
-        state.prompt = text;
+        state.mapPrompt = mapText;
+        state.reducePrompt = reduceText;
         state.open = null;
         return load();
       })
@@ -374,8 +400,13 @@
   els.edit.addEventListener("click", function () {
     if (!runId) return;
     state.editing = !state.editing;
-    if (state.editing && !els.prompt.value && state.prompt) {
-      els.prompt.value = state.prompt;
+    if (state.editing) {
+      if (!els.mapPrompt.value && state.mapPrompt) {
+        els.mapPrompt.value = state.mapPrompt;
+      }
+      if (!els.reducePrompt.value && state.reducePrompt) {
+        els.reducePrompt.value = state.reducePrompt;
+      }
     }
     updateChrome();
   });
