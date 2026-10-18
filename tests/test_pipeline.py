@@ -8,6 +8,7 @@ import pytest
 from asgard.core.pipeline import (
     PIPELINE,
     classify_error_ids,
+    classify_retryable_ids,
     clear_from,
     drop_classify_items,
 )
@@ -63,6 +64,7 @@ def test_drop_classify_items_keeps_successes_and_clears_later(tmp_path: Path) ->
     _write(tmp_path / "bundle" / "output.json", "{}\n")
 
     assert classify_error_ids(tmp_path) == ["2", "3"]
+    assert classify_retryable_ids(tmp_path) == ["2", "3"]
     removed = drop_classify_items(tmp_path, ["2", "3", "missing"])
     assert removed == ["2", "3"]
 
@@ -77,3 +79,21 @@ def test_drop_classify_items_keeps_successes_and_clears_later(tmp_path: Path) ->
     assert (classify / "items.jsonl").is_file()
     assert not (tmp_path / "consolidate").exists()
     assert not (tmp_path / "bundle").exists()
+
+
+def test_classify_retryable_ids_includes_unresolved(tmp_path: Path) -> None:
+    classify = tmp_path / "classify"
+    classify.mkdir()
+    rows = [
+        {"id": "1", "payload": {"pr_id": "1", "status": "approved"}},
+        {"id": "2", "payload": {"pr_id": "2", "status": "unresolved_no_progress"}},
+        {"id": "3", "payload": {"pr_id": "3", "status": "unresolved_max_iter"}},
+        {"id": "4", "payload": {"pr_id": "4", "status": "error"}},
+    ]
+    (classify / "items.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    assert classify_error_ids(tmp_path) == ["4"]
+    assert classify_retryable_ids(tmp_path) == ["2", "3", "4"]

@@ -11,7 +11,7 @@ from typing import Any
 from asgard.core.config import prepare_run
 from asgard.core.pipeline import (
     PIPELINE,
-    classify_error_ids,
+    classify_retryable_ids,
     clear_from,
     drop_classify_items,
     run_pipeline,
@@ -140,28 +140,36 @@ class RunSession:
         *,
         all_errors: bool = False,
     ) -> tuple[Path, list[str]]:
-        """Drop error classify checkpoints and resume classify for those PRs."""
+        """Drop error/unresolved classify checkpoints and resume classify for those PRs.
+
+        ``all_errors`` retries every retryable checkpoint (``error`` and
+        ``unresolved_*``), not only hard errors.
+        """
         if self.output_dir is None:
             raise RuntimeError("no run to resume")
         if self.running:
             raise RuntimeError("a run is already in progress")
         self.join()
-        errors = set(classify_error_ids(self.output_dir))
+        retryable = set(classify_retryable_ids(self.output_dir))
         if all_errors:
-            targets = errors
+            targets = retryable
         else:
             requested = {item_id for item_id in (pr_ids or []) if item_id}
-            targets = requested & errors
+            targets = requested & retryable
             if requested and not targets:
                 raise ValueError(
-                    "none of the selected PRs are error checkpoints"
-                    + (f" ({len(errors)} errors still on disk)" if errors else "")
+                    "none of the selected PRs are error or unresolved checkpoints"
+                    + (
+                        f" ({len(retryable)} still on disk)"
+                        if retryable
+                        else ""
+                    )
                 )
         if not targets:
-            raise ValueError("no error pull requests to retry")
+            raise ValueError("no error or unresolved pull requests to retry")
         removed = drop_classify_items(self.output_dir, targets)
         if not removed:
-            raise ValueError("no error pull requests to retry")
+            raise ValueError("no error or unresolved pull requests to retry")
         output_dir = self.start(
             config_path=self.output_dir / "config.json",
             start="classify",

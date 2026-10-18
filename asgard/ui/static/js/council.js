@@ -77,6 +77,7 @@
     source: null,
     seen: {},
     retrying: false,
+    batchReprocessing: false,
   };
 
   function emptyPr(prId) {
@@ -92,6 +93,7 @@
       error: "",
       rounds: [],
       liveRound: null,
+      reprocessing: false,
     };
   }
 
@@ -122,6 +124,13 @@
     );
   }
 
+  function isRetryableStatus(status) {
+    return (
+      status === "error" ||
+      (typeof status === "string" && status.indexOf("unresolved_") === 0)
+    );
+  }
+
   function resetPrForRetry(prId) {
     var pr = ensurePr(prId);
     pr.phase = "classifying";
@@ -132,11 +141,21 @@
     pr.decision = null;
     pr.iterations = 0;
     pr.liveRound = null;
+    pr.reprocessing = true;
+  }
+
+  function clearReprocessingFlags() {
+    state.batchReprocessing = false;
+    state.order.forEach(function (prId) {
+      var pr = state.prs[prId];
+      if (pr) pr.reprocessing = false;
+    });
   }
 
   function retryClassify(options) {
     if (state.retrying) return Promise.resolve();
     var body = options || {};
+    var batch = body.all_errors === true;
     state.retrying = true;
     render();
     return api("/classify/retry", {
@@ -153,6 +172,7 @@
           throw new Error(typeof detail === "string" ? detail : "Could not retry classify");
         }
         var ids = Array.isArray(result.body.pr_ids) ? result.body.pr_ids : [];
+        if (batch) state.batchReprocessing = true;
         ids.forEach(resetPrForRetry);
         state.classifyDone = false;
         state.metrics = null;
@@ -162,6 +182,7 @@
       })
       .catch(function (err) {
         var message = err.message || String(err);
+        if (batch) state.batchReprocessing = false;
         return loadItems()
           .catch(function () {
             /* ignore */
@@ -403,6 +424,7 @@
     }
     pr.phase = "done";
     pr.liveRound = null;
+    pr.reprocessing = false;
     if (Array.isArray(payload.traces)) {
       pr.rounds = buildRounds(pr.prId, payload.traces);
       if (pr.status === "error") {
@@ -545,11 +567,11 @@
         payloads.push(payload);
         seen[prId] = true;
       });
-      // Dropped error checkpoints (retry) must not stay painted as error from the log.
+      // Dropped retryable checkpoints must not stay painted from the log.
       state.order.forEach(function (prId) {
         var pr = state.prs[prId];
         if (!pr || seen[prId]) return;
-        if (pr.status !== "error") return;
+        if (!isRetryableStatus(pr.status)) return;
         resetPrForRetry(prId);
       });
       if (payloads.length && !state.classifyDone) {
@@ -731,8 +753,13 @@
   function onStageFinished(event, live) {
     if (event.stage !== "classify") return null;
     state.classifyDone = true;
+    state.batchReprocessing = false;
     if (!live) return "render";
-    return loadFinishedArtifacts().then(render);
+    return loadFinishedArtifacts()
+      .then(function () {
+        clearReprocessingFlags();
+        render();
+      });
   }
 
   function onError(event) {
@@ -833,11 +860,29 @@
     els.unresolved.textContent = String(state.totals.unresolved);
     if (els.errorTotal) els.errorTotal.textContent = String(state.totals.error || 0);
     if (els.retryAll) {
-      var n = state.totals.error || 0;
-      els.retryAll.hidden = n < 1 || state.retrying;
-      els.retryAll.disabled = state.retrying;
-      els.retryAll.textContent =
-        n === 1 ? "Retry 1 error" : "Retry all " + n + " errors";
+      var failed = (state.totals.error || 0) + (state.totals.unresolved || 0);
+      var anyReprocessing = false;
+      state.order.forEach(function (prId) {
+        var item = state.prs[prId];
+        if (item && item.reprocessing) anyReprocessing = true;
+      });
+      var busy = state.retrying || state.batchReprocessing || anyReprocessing;
+      if (busy) {
+        els.retryAll.hidden = false;
+        els.retryAll.disabled = true;
+        els.retryAll.textContent = "Reprocessing…";
+        els.retryAll.setAttribute("aria-busy", "true");
+      } else if (failed < 1) {
+        els.retryAll.hidden = true;
+        els.retryAll.disabled = false;
+        els.retryAll.removeAttribute("aria-busy");
+      } else {
+        els.retryAll.hidden = false;
+        els.retryAll.disabled = false;
+        els.retryAll.textContent =
+          failed === 1 ? "Retry 1 failed PR" : "Retry all " + failed + " failed PRs";
+        els.retryAll.removeAttribute("aria-busy");
+      }
     }
   }
 
@@ -1069,8 +1114,23 @@
     els.error.hidden = !showError;
     els.error.textContent = showError ? pr.error : "";
     if (els.retry) {
-      els.retry.hidden = pr.status !== "error" || state.retrying;
-      els.retry.disabled = state.retrying;
+      var reprocessing = !!(pr.reprocessing || (state.retrying && isRetryableStatus(pr.status)));
+      if (reprocessing) {
+        els.retry.hidden = false;
+        els.retry.disabled = true;
+        els.retry.textContent = "Reprocessing…";
+        els.retry.setAttribute("aria-busy", "true");
+      } else if (isRetryableStatus(pr.status)) {
+        els.retry.hidden = false;
+        els.retry.disabled = false;
+        els.retry.textContent = "Retry this PR";
+        els.retry.removeAttribute("aria-busy");
+      } else {
+        els.retry.hidden = true;
+        els.retry.disabled = false;
+        els.retry.textContent = "Retry this PR";
+        els.retry.removeAttribute("aria-busy");
+      }
     }
 
     if (waiting) {
@@ -1141,7 +1201,16 @@
     source.addEventListener("ping", function () {});
     source.addEventListener("error", function () {
       api("").then(function (result) {
-        if (result.ok && result.body && !result.body.running) closeSource();
+        if (result.ok && result.body && !result.body.running) {
+          closeSource();
+          clearReprocessingFlags();
+          return loadItems()
+            .catch(function () {
+              /* ignore */
+            })
+            .then(render);
+        }
+        return null;
       });
     });
   }

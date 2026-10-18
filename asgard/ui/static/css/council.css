@@ -291,8 +291,16 @@
   color: var(--no);
 }
 
-#council-retry {
+#council-retry,
+#council-retry-all {
   align-self: flex-start;
+}
+
+#council-retry:disabled,
+#council-retry-all:disabled {
+  opacity: 0.7;
+  cursor: default;
+  text-decoration: none;
 }
 
 .council-rounds {

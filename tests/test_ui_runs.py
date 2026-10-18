@@ -165,4 +165,67 @@ def test_retry_classify_drops_errors_and_resumes(
         json={"pr_ids": ["1"]},
     )
     assert missing.status_code == 400
-    assert "error checkpoints" in missing.json()["detail"]
+    assert "error or unresolved" in missing.json()["detail"]
+
+
+def test_retry_classify_allows_unresolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = tmp_path / "runs"
+    run_dir = _write_run(
+        runs,
+        "acme__app",
+        "20261016T150000Z",
+        repo="acme/app",
+        complete=False,
+    )
+    classify = run_dir / "classify"
+    classify.mkdir()
+    (classify / "items.jsonl").write_text(
+        "".join(
+            json.dumps({"id": pr_id, "payload": {"pr_id": pr_id, "status": status}})
+            + "\n"
+            for pr_id, status in (
+                ("1", "approved"),
+                ("2", "unresolved_no_progress"),
+                ("3", "unresolved_max_iter"),
+            )
+        ),
+        encoding="utf-8",
+    )
+    (classify / "output.json").write_text("[]\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    session = RunSession.open_existing(run_dir, session_id="acme__app--20261016T150000Z")
+    started: list[str | None] = []
+
+    def fake_start(**kwargs: object) -> Path:
+        started.append(kwargs.get("start"))  # type: ignore[arg-type]
+        return run_dir
+
+    monkeypatch.setattr(session, "start", fake_start)
+    output_dir, removed = session.retry_classify(pr_ids=["2"])
+    assert output_dir == run_dir
+    assert removed == ["2"]
+    assert started == ["classify"]
+    kept = (classify / "items.jsonl").read_text(encoding="utf-8")
+    assert '"id": "1"' in kept
+    assert '"id": "2"' not in kept
+    assert '"id": "3"' in kept
+
+    (classify / "items.jsonl").write_text(
+        "".join(
+            json.dumps({"id": pr_id, "payload": {"pr_id": pr_id, "status": status}})
+            + "\n"
+            for pr_id, status in (
+                ("1", "approved"),
+                ("3", "unresolved_max_iter"),
+                ("4", "error"),
+            )
+        ),
+        encoding="utf-8",
+    )
+    started.clear()
+    _, removed_all = session.retry_classify(all_errors=True)
+    assert set(removed_all) == {"3", "4"}
+    assert started == ["classify"]
