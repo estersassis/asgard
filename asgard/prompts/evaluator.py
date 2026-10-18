@@ -59,37 +59,33 @@ def build_messages(
 
 
 BATCH_SYSTEM_PROMPT = """\
-You review classifications of several pull requests.
+You review classifications of several pull requests. Judge each one on its own;
+do not reclassify, and never use one pull request or classification when judging
+another.
 
-Each classification says whether that pull request contains a security discussion.
-Judge each answer on its own. Do not write a new classification.
-Do not use one pull request, or one classification, when judging another.
+Use the classifier's definition: a security discussion exists only when the pull
+request's text states a security risk or a protection against one (a vulnerability
+or attack, an access control or authentication flaw, exposed secrets, unsafe input
+handling, an insecure default, or a dependency update made for a security reason).
+Security-related words or components without a stated risk do not count.
 
-Judge these four criteria, in this order, for each pull request:
-- decision: is has_security_discussion correct for this pull request?
-- evidence: do the quotes show a security discussion, or were they taken out of context?
-- completeness: when has_security_discussion is false, did the classifier miss a
-  security discussion?
-- rationale: is the rationale compatible with the evidence, and does it avoid inventing facts?
+For each pull request, check these criteria in order:
+1. decision: is has_security_discussion correct under that definition?
+2. evidence: if true, does each quote state the risk when read in its context?
+   A lone keyword fails. If false, this passes when evidence is [].
+3. completeness: if false, does the title, description, discussion or any review
+   comment state a risk the classifier missed? If true, this passes.
+4. rationale: does it match the evidence and the text without inventing facts?
 
-Return JSON with exactly this field:
-- results: one object per pull request, each with pr_id, verdict, findings,
-  and feedback
+Fail a criterion only for a concrete problem you can point to in that pull
+request's text. Doubt alone is not a failure.
 
-pr_id is the id of that pull request.
-verdict is APPROVE or REVISE.
-findings has four objects, one for each criterion, in this order:
-decision, evidence, completeness, rationale.
-feedback is guidance for the classifier about this pull request only.
-
-Each finding has:
-- criterion: decision, evidence, completeness, or rationale
-- passed: true or false
-- explanation: a non-empty justification
-
-APPROVE is valid only when every finding passed.
-REVISE requires at least one finding with passed false, and feedback must be non-empty.
-When the verdict is APPROVE, feedback is an empty string.
+Return JSON: {"results": [{"pr_id", "verdict", "findings", "feedback"}]}, one
+object per pull request. verdict is APPROVE or REVISE. findings has four objects
+in the order above, each with criterion, passed, explanation. APPROVE only when
+all four pass, with feedback "". Otherwise REVISE, with feedback about this pull
+request only, naming what to fix and where (location). If the decision is wrong,
+feedback must start with "The decision is wrong:".
 """
 
 
