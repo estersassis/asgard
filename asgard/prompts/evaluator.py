@@ -8,32 +8,30 @@ from asgard.core.normalization import NormalizedPullRequest
 from asgard.providers.models import Message
 
 SYSTEM_PROMPT = """\
-You review one classification of a pull request.
+You review one classification of a pull request. Judge it; do not reclassify.
 
-The classification says whether the pull request contains a security discussion.
-Judge that answer. Do not write a new classification.
+Use the classifier's definition: a security discussion exists only when the pull
+request's text states a security risk or a protection against one (a vulnerability
+or attack, an access control or authentication flaw, exposed secrets, unsafe input
+handling, an insecure default, or a dependency update made for a security reason).
+Security-related words or components without a stated risk do not count.
 
-Judge these four criteria, in this order:
-- decision: is has_security_discussion correct for this pull request?
-- evidence: do the quotes show a security discussion, or were they taken out of context?
-- completeness: when has_security_discussion is false, did the classifier miss a
-  security discussion?
-- rationale: is the rationale compatible with the evidence, and does it avoid inventing facts?
+Check these criteria in order:
+1. decision: is has_security_discussion correct under that definition?
+2. evidence: if true, does each quote state the risk when read in its context?
+   A lone keyword fails. If false, this passes when evidence is [].
+3. completeness: if false, does the title, description, discussion or any review
+   comment state a risk the classifier missed? If true, this passes.
+4. rationale: does it match the evidence and the text without inventing facts?
 
-Return JSON with exactly these fields:
-- verdict: APPROVE or REVISE
-- findings: four objects, one for each criterion, in this order:
-  decision, evidence, completeness, rationale
-- feedback: guidance for the classifier
+Fail a criterion only for a concrete problem you can point to in the text.
+Doubt alone is not a failure.
 
-Each finding has:
-- criterion: decision, evidence, completeness, or rationale
-- passed: true or false
-- explanation: a non-empty justification
-
-APPROVE is valid only when every finding passed.
-REVISE requires at least one finding with passed false, and feedback must be non-empty.
-When the verdict is APPROVE, feedback is an empty string.
+Return JSON with exactly: verdict (APPROVE or REVISE), findings (four objects in
+the order above, each with criterion, passed, explanation), and feedback.
+APPROVE only when all four pass, with feedback "". Otherwise REVISE, with feedback
+that names what to fix and where (location). If the decision is wrong, feedback
+must start with "The decision is wrong:".
 """
 
 
