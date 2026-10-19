@@ -1,9 +1,72 @@
 (function () {
   "use strict";
 
+  var STORAGE_KEY = "asgard-theme";
+  var root = document.getElementById("ag");
+  var toggle = document.getElementById("theme-toggle");
   var footer = document.getElementById("runs-footer");
   var list = document.getElementById("runs-menu-list");
   var empty = document.getElementById("runs-menu-empty");
+
+  function currentTheme() {
+    if (!root) return "dark";
+    return root.getAttribute("data-theme") === "light" ? "light" : "dark";
+  }
+
+  function syncToggle() {
+    if (!toggle) return;
+    var light = currentTheme() === "light";
+    toggle.setAttribute(
+      "aria-label",
+      light ? "Switch to dark theme" : "Switch to light theme"
+    );
+    toggle.title = light ? "Dark theme" : "Light theme";
+  }
+
+  function setTheme(theme) {
+    if (!root) return;
+    if (theme === "light") root.setAttribute("data-theme", "light");
+    else root.removeAttribute("data-theme");
+    try {
+      localStorage.setItem(STORAGE_KEY, theme);
+    } catch (e) {}
+    var params = new URLSearchParams(window.location.search);
+    if (theme === "light") params.set("theme", "light");
+    else params.delete("theme");
+    var query = params.toString();
+    var next = window.location.pathname + (query ? "?" + query : "") + window.location.hash;
+    window.history.replaceState(null, "", next);
+    syncToggle();
+  }
+
+  function withTheme(href) {
+    try {
+      var url = new URL(href, window.location.origin);
+      if (currentTheme() === "light") url.searchParams.set("theme", "light");
+      else url.searchParams.delete("theme");
+      return url.pathname + url.search + url.hash;
+    } catch (e) {
+      return href;
+    }
+  }
+
+  function syncNavLinks() {
+    document.querySelectorAll(".site-header a[href]").forEach(function (link) {
+      var href = link.getAttribute("href");
+      if (!href || href.charAt(0) === "#") return;
+      link.setAttribute("href", withTheme(href));
+    });
+  }
+
+  if (toggle) {
+    syncToggle();
+    syncNavLinks();
+    toggle.addEventListener("click", function () {
+      setTheme(currentTheme() === "light" ? "dark" : "light");
+      syncNavLinks();
+    });
+  }
+
   if (!footer || !list) return;
 
   var params = new URLSearchParams(window.location.search);
@@ -25,10 +88,13 @@
 
   function hrefFor(runId) {
     var path = window.location.pathname || "/";
+    var next = new URLSearchParams();
+    next.set("run", runId);
+    if (currentTheme() === "light") next.set("theme", "light");
     if (path === "/" || path === "/setup") {
-      return "/pipeline?run=" + encodeURIComponent(runId);
+      return "/pipeline?" + next.toString();
     }
-    return path + "?run=" + encodeURIComponent(runId);
+    return path + "?" + next.toString();
   }
 
   function render(runs) {

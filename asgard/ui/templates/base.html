@@ -9,7 +9,24 @@
   {% block head %}{% endblock %}
 </head>
 <body>
-  <div class="ag"{% if theme == 'light' %} data-theme="light"{% endif %}>
+  <div class="ag" id="ag"{% if theme == 'light' %} data-theme="light"{% endif %}>
+    <script>
+      (function () {
+        var root = document.getElementById("ag");
+        if (!root) return;
+        var fromUrl = new URLSearchParams(location.search).get("theme");
+        var saved = null;
+        try { saved = localStorage.getItem("asgard-theme"); } catch (e) {}
+        var theme = (fromUrl === "light" || fromUrl === "dark")
+          ? fromUrl
+          : (saved === "light" || saved === "dark" ? saved : null);
+        if (theme === "light") root.setAttribute("data-theme", "light");
+        else if (theme === "dark") root.removeAttribute("data-theme");
+        if (theme === "light" || theme === "dark") {
+          try { localStorage.setItem("asgard-theme", theme); } catch (e) {}
+        }
+      })();
+    </script>
     <header class="site-header">
       {% set run_qs = ('?run=' ~ (run|urlencode)) if run else '' %}
       <a class="brand" href="{{ url_for('setup') }}{{ run_qs }}">
@@ -29,6 +46,15 @@
         <a class="nav{% if screen == 'guideline' %} on{% endif %}" href="{{ url_for('guideline') }}{{ run_qs }}"{% if screen == 'guideline' %} aria-current="page"{% endif %}><span class="n">IV</span>Guideline</a>
         <a class="nav{% if screen == 'forge' %} on{% endif %}" href="{{ url_for('forge') }}{{ run_qs }}"{% if screen == 'forge' %} aria-current="page"{% endif %}><span class="n">V</span>Forge</a>
       </nav>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to light theme" title="Theme">
+        <svg class="theme-icon theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+        </svg>
+        <svg class="theme-icon theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"></path>
+        </svg>
+      </button>
     </header>
     <main class="page{% block page_class %}{% endblock %}">
       {% block content %}{% endblock %}

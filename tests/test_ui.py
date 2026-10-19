@@ -344,6 +344,15 @@ def test_shell_and_themes() -> None:
     assert shell_js.status_code == 200
     assert "/api/runs" in shell_js.text
     assert "runs-footer" in shell_js.text or "runs-menu-list" in shell_js.text
+    assert "asgard-theme" in shell_js.text
+    assert "theme-toggle" in dark.text
+    assert "Switch to light theme" in dark.text
+    assert "theme-icon-sun" in dark.text
+    assert "theme-icon-moon" in dark.text
+
+    shell_css = client.get("/static/css/shell.css")
+    assert shell_css.status_code == 200
+    assert ".theme-toggle" in shell_css.text
 
     templates = Path(__file__).resolve().parents[1] / "asgard" / "ui" / "templates"
     for path in templates.rglob("*.html"):
