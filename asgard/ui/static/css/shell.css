@@ -49,6 +49,40 @@ body {
   margin-left: auto;
 }
 
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+}
+
+.theme-icon {
+  display: none;
+}
+
+.ag:not([data-theme="light"]) .theme-icon-sun,
+.ag[data-theme="light"] .theme-icon-moon {
+  display: block;
+}
+
 .nav {
   display: flex;
   align-items: center;
