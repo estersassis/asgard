@@ -17,7 +17,7 @@ from asgard.core.prompt_registry import (
     resolve_system_prompt,
 )
 from asgard.core.stage import RunContext, Stage
-from asgard.prompts.synthesizer import fill_repository
+from asgard.prompts.synthesizer import fill
 from asgard.providers.models import LLMSettings
 
 _ROLES = ("classifier", "evaluator", "synthesizer")
@@ -125,8 +125,8 @@ def _prompts(config: dict[str, Any] | None, run_dir: Path) -> dict[str, str | No
             reduce_prompt = resolve_reduce_prompt(config, run_dir)
         except LookupError as exc:
             raise ConfigError(str(exc)) from None
-        synthesizer_map = _sha(fill_repository(map_prompt, repo))
-        synthesizer_reduce = _sha(fill_repository(reduce_prompt, repo))
+        synthesizer_map = _sha(fill(map_prompt, repository=repo))
+        synthesizer_reduce = _sha(fill(reduce_prompt, repository=repo))
     return {
         "classifier": classifier,
         "evaluator": evaluator,

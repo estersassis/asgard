@@ -1,115 +1,124 @@
-"""Map–Reduce synthesis of the User Guideline from consolidated security discussions."""
+"""Synthesis of the SECURITY.md User Guidelines, organized by OWASP Top 10:2025.
+
+1. Map: each PR's rationale is rewritten as one recommendation and tagged
+   with an OWASP category.
+2. Group (code): recommendations are bucketed by category, in Top 10 order.
+3. Reduce: per category, duplicate recommendations are merged and PRs cited.
+"""
 
 import json
 from typing import Any
 
 from asgard.providers.models import Message
 
+OWASP_TOP10_2025: dict[str, str] = {
+    "A01": "Broken Access Control",
+    "A02": "Security Misconfiguration",
+    "A03": "Software Supply Chain Failures",
+    "A04": "Cryptographic Failures",
+    "A05": "Injection",
+    "A06": "Insecure Design",
+    "A07": "Authentication Failures",
+    "A08": "Software or Data Integrity Failures",
+    "A09": "Security Logging & Alerting Failures",
+    "A10": "Mishandling of Exceptional Conditions",
+}
+OTHER = "OTHER"  # fallback for an invalid category id returned by the LLM
+
 MAP_PROMPT = """\
-Below are security discussions from pull requests of {repository}: for each,
-its pr_id, title, evidence quotes and the classifier's rationale.
+Below are security pull requests of {repository}, each with pr_id, title,
+evidence and rationale.
 
-For each pull request, extract the concrete rules a contributor should follow,
-as stated or fixed in that pull request.
+For each pull request, rewrite its rationale as one recommendation for
+contributors: a short imperative title and one or two sentences with the risk
+and the correct practice. Use only that pull request's text.
 
-- Each rule is about exactly one artifact: a setting, environment variable,
-  function, class, module, template tag or filter, CLI flag, header, or
-  dependency. If the pull request touches several artifacts or gives several
-  pieces of advice, return one rule for each.
-- artifact is the short name as written in the text, without module path,
-  parentheses or decorator sign (e.g. constant_time_compare, ALLOWED_HOSTS).
-- Use only that pull request's own text. If it states no concrete rule, return
-  no rules for it. Never use one pull request to explain another.
+Then assign the OWASP Top 10:2025 category that best fits it:
+{owasp_categories}
 
-Return JSON: {"rules": [{"pr_id", "artifact", "rule", "risk"}]}. rule is one
-imperative sentence; risk is one sentence on what goes wrong otherwise.
+Return JSON: {"items": [{"pr_id", "owasp", "title", "text"}]}, where owasp is
+a category id such as A05.
 """
 
 REDUCE_PROMPT = """\
-Below are candidate rules extracted from security pull requests of
-{repository}, each with pr_id, artifact, rule and risk. Write the User
-Guidelines section of its SECURITY.md.
+Below are recommendations from security pull requests of {repository}, all in
+the section "{category}" of its SECURITY.md.
 
-Work in this order:
-1. Group the candidates by artifact.
-2. For each artifact, write one recommendation per distinct piece of advice.
-   Candidates with the same artifact and the same advice share a
-   recommendation; anything else stays separate.
-3. Only then group the finished recommendations into thematic topics. Topics
-   never merge, shorten or drop recommendations.
+Merge recommendations that give the same advice into one, citing all of their
+pr_ids. Keep every other recommendation as is. Do not drop any pr_id and do
+not add advice that is not in the input.
 
-Rules:
-- A recommendation is about exactly one artifact, and its title names it.
-  Never combine artifacts: rules about a password hasher, its salt and its
-  iteration count are three recommendations, not one.
-- There are at least as many recommendations as distinct artifacts.
-- Cite exactly the pr_ids of the candidates the recommendation covers.
-  Every candidate is covered by one recommendation.
-- Title: a short imperative. Text: Detailed sentences with the concrete risk and the
-  correct practice, using only what the candidates say.
-
-Return JSON: {"topics": [{"title", "recommendations":
-[{"title", "text", "pr_ids"}]}]}.
+Return JSON: {"recommendations": [{"title", "text", "pr_ids"}]}.
 """
 
 # Forge / registry "synthesizer" role edits the reduce prompt.
 SYSTEM_PROMPT = REDUCE_PROMPT
 
-_MAP_FIELDS = ("pr_id", "title", "evidence", "rationale")
+
+def fill(prompt: str, **values: str) -> str:
+    """Replace ``{name}`` literally so JSON braces in the prompt stay intact."""
+    for name, value in values.items():
+        prompt = prompt.replace("{" + name + "}", value)
+    return prompt
 
 
-def fill_repository(prompt: str, repository: str) -> str:
-    """Replace ``{repository}`` without interpreting other braces (JSON examples)."""
-    return prompt.replace("{repository}", repository)
-
-
-def map_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return the per-PR payload sent to the map step (no ``link``)."""
-    return [{key: record[key] for key in _MAP_FIELDS} for record in records]
+def category_label(cid: str) -> str:
+    """Section heading, e.g. 'A05:2025 Injection'."""
+    return f"{cid}:2025 {OWASP_TOP10_2025[cid]}" if cid in OWASP_TOP10_2025 else "Other"
 
 
 def build_map_messages(
-    repository: str,
-    records: list[dict[str, Any]],
-    system_prompt: str | None = None,
+    repository: str, records: list[dict[str, Any]], system_prompt: str | None = None
 ) -> list[Message]:
-    """Return the system prompt and one user message for a map batch.
-
-    ``system_prompt`` overrides ``MAP_PROMPT`` when set. Substitution is literal
-    so JSON braces in the prompt stay intact.
-    """
-    prompt = MAP_PROMPT if system_prompt is None else system_prompt
-    return [
-        Message(role="system", content=fill_repository(prompt, repository)),
-        Message(role="user", content=json.dumps(map_records(records), indent=2)),
+    """Messages for one map batch (``link`` is not sent)."""
+    categories = "\n".join(f"- {cid} {name}" for cid, name in OWASP_TOP10_2025.items())
+    payload = [
+        {k: r[k] for k in ("pr_id", "title", "evidence", "rationale")} for r in records
     ]
+    prompt = fill(
+        system_prompt or MAP_PROMPT, repository=repository, owasp_categories=categories
+    )
+    return [
+        Message(role="system", content=prompt),
+        Message(role="user", content=json.dumps(payload, indent=2)),
+    ]
+
+
+def group_by_category(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Bucket map items by category id, in Top 10 order; empty ones omitted."""
+    groups: dict[str, list[dict[str, Any]]] = {cid: [] for cid in [*OWASP_TOP10_2025, OTHER]}
+    for item in items:
+        cid = str(item.get("owasp", "")).strip().upper()[:3]
+        item["owasp"] = cid if cid in OWASP_TOP10_2025 else OTHER
+        groups[item["owasp"]].append(item)
+    return {cid: group for cid, group in groups.items() if group}
 
 
 def build_reduce_messages(
     repository: str,
-    rules: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+    category: str,
     system_prompt: str | None = None,
 ) -> list[Message]:
-    """Return the system prompt and one user message for the reduce step.
-
-    ``system_prompt`` overrides ``REDUCE_PROMPT`` when set. Substitution is
-    literal so JSON braces in the prompt stay intact.
-    """
-    prompt = REDUCE_PROMPT if system_prompt is None else system_prompt
+    """Messages for one category's reduce call."""
+    payload = [{k: i[k] for k in ("pr_id", "title", "text")} for i in items]
+    prompt = fill(
+        system_prompt or REDUCE_PROMPT,
+        repository=repository,
+        category=category_label(category),
+    )
     return [
-        Message(role="system", content=fill_repository(prompt, repository)),
-        Message(role="user", content=json.dumps(rules, indent=2)),
+        Message(role="system", content=prompt),
+        Message(role="user", content=json.dumps(payload, indent=2)),
     ]
 
 
-def build_messages(
-    repository: str,
-    records: list[dict[str, Any]],
-    system_prompt: str | None = None,
-) -> list[Message]:
-    """Backward-compatible alias for :func:`build_reduce_messages`.
-
-    Historical callers passed consolidated records; prefer the map/reduce
-    builders for new code.
-    """
-    return build_reduce_messages(repository, records, system_prompt=system_prompt)
+def assemble_topics(sections: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Final structure in Top 10 order: ``{"topics": [{"title", "recommendations"}]}``."""
+    return {
+        "topics": [
+            {"title": category_label(cid), "recommendations": recs}
+            for cid, recs in sections.items()
+            if recs
+        ]
+    }

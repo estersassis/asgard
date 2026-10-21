@@ -9,7 +9,13 @@ from asgard.core.config import ConfigError
 from asgard.core.events import CitationWarning, SynthesisChunk
 from asgard.core.prompt_registry import resolve_map_prompt, resolve_reduce_prompt
 from asgard.core.stage import RunContext, Stage
-from asgard.prompts.synthesizer import build_map_messages, build_reduce_messages
+from asgard.prompts.synthesizer import (
+    assemble_topics,
+    build_map_messages,
+    build_reduce_messages,
+    category_label,
+    group_by_category,
+)
 from asgard.providers.factory import LLMFactory
 from asgard.providers.models import Message
 
@@ -24,13 +30,13 @@ _REDUCE_BATCH = 50
 _MAP_OUTPUT = "map.json"
 
 
-class MapRule(BaseModel):
+class MapItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pr_id: str = Field(min_length=1)
-    artifact: str = Field(min_length=1)
-    rule: str = Field(min_length=1)
-    risk: str = Field(min_length=1)
+    owasp: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    text: str = Field(min_length=1)
 
     @field_validator("pr_id", mode="before")
     @classmethod
@@ -42,10 +48,10 @@ class MapRule(BaseModel):
         return value
 
 
-class MapRules(BaseModel):
+class MapBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    rules: list[MapRule] = Field(default_factory=list)
+    items: list[MapItem] = Field(default_factory=list)
 
 
 class Recommendation(BaseModel):
@@ -91,6 +97,12 @@ class Synthesis(BaseModel):
     topics: list[Topic] = Field(min_length=1)
 
 
+class Recommendations(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recommendations: list[Recommendation] = Field(min_length=1)
+
+
 class SynthesizeStage(Stage):
     name = "synthesize"
 
@@ -110,22 +122,24 @@ class SynthesizeStage(Stage):
         except LookupError as exc:
             raise ConfigError(str(exc)) from None
 
-        rules = _load_map(ctx)
-        if rules is None:
-            rules = _map(self.factory, ctx, self.repo, records, map_prompt)
-            _write_map(ctx, rules)
-        if not rules:
+        items = _load_map(ctx)
+        if items is None:
+            items = _map(self.factory, ctx, self.repo, records, map_prompt)
+            _write_map(ctx, items)
+        if not items:
             return _EMPTY
 
-        guideline = _reduce(
+        sections = _reduce(
             self.factory,
             ctx,
             self.repo,
-            rules,
+            items,
             reduce_prompt,
             allowed,
         )
-        return _markdown(self.repo, guideline)
+        if not any(sections.values()):
+            return _EMPTY
+        return _markdown(self.repo, Synthesis.model_validate(assemble_topics(sections)))
 
 
 def _map(
@@ -135,27 +149,27 @@ def _map(
     records: list[dict[str, Any]],
     map_prompt: str,
 ) -> list[dict[str, str]]:
-    rules: list[dict[str, str]] = []
+    items: list[dict[str, str]] = []
     for start in range(0, len(records), _MAP_BATCH):
         batch = records[start : start + _MAP_BATCH]
         batch_ids = {record["pr_id"] for record in batch}
         messages = build_map_messages(repo, batch, system_prompt=map_prompt)
-        response = factory.generate("synthesizer", messages, schema=MapRules)
+        response = factory.generate("synthesizer", messages, schema=MapBatch)
         ctx.emit(SynthesisChunk(text=response.text))
         parsed = response.parsed
-        if not isinstance(parsed, MapRules):
+        if not isinstance(parsed, MapBatch):
             raise ConfigError(_INVALID)
-        for rule in parsed.rules:
-            if rule.pr_id not in batch_ids:
+        for item in parsed.items:
+            if item.pr_id not in batch_ids:
                 continue
-            rules.append(rule.model_dump())
-    return rules
+            items.append(item.model_dump())
+    return items
 
 
-def _write_map(ctx: RunContext, rules: list[dict[str, str]]) -> None:
+def _write_map(ctx: RunContext, items: list[dict[str, str]]) -> None:
     path = ctx.run_dir / "synthesize" / _MAP_OUTPUT
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(rules, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(items, indent=2) + "\n", encoding="utf-8")
 
 
 def _load_map(ctx: RunContext) -> list[dict[str, str]] | None:
@@ -169,70 +183,70 @@ def _load_map(ctx: RunContext) -> list[dict[str, str]] | None:
         return None
     if not isinstance(data, list) or not data:
         return None
-    rules: list[dict[str, str]] = []
+    items: list[dict[str, str]] = []
     for item in data:
         if not isinstance(item, dict):
             return None
         pr_id = item.get("pr_id")
-        artifact = item.get("artifact")
-        rule = item.get("rule")
-        risk = item.get("risk")
-        if not all(isinstance(value, str) and value for value in (pr_id, artifact, rule, risk)):
+        owasp = item.get("owasp")
+        title = item.get("title")
+        text = item.get("text")
+        if not all(isinstance(value, str) and value for value in (pr_id, owasp, title, text)):
             return None
-        rules.append(
-            {"pr_id": pr_id, "artifact": artifact, "rule": rule, "risk": risk}
-        )
-    return rules
+        items.append({"pr_id": pr_id, "owasp": owasp, "title": title, "text": text})
+    return items
 
 
 def _reduce(
     factory: LLMFactory,
     ctx: RunContext,
     repo: str,
-    rules: list[dict[str, str]],
+    items: list[dict[str, str]],
     reduce_prompt: str,
     allowed: set[str],
-) -> Synthesis:
-    """Reduce rules in batches so a single model reply cannot truncate."""
-    parts: list[Synthesis] = []
-    last_messages: list[Message] | None = None
-    last_text = ""
-    for start in range(0, len(rules), _REDUCE_BATCH):
-        batch = rules[start : start + _REDUCE_BATCH]
-        messages = build_reduce_messages(repo, batch, system_prompt=reduce_prompt)
-        response = factory.generate("synthesizer", messages, schema=Synthesis)
-        ctx.emit(SynthesisChunk(text=response.text))
-        parts.append(_guideline(response.parsed))
-        last_messages = messages
-        last_text = response.text
-    guideline = _merge_parts(parts)
-    if last_messages is None:
-        raise ConfigError(_INVALID)
-    if len(parts) == 1:
-        return _repair(factory, ctx, last_messages, last_text, guideline, allowed)
-    if _outside(guideline, allowed):
-        return _accept_citations(ctx, guideline, allowed)
-    return guideline
+) -> dict[str, list[dict[str, Any]]]:
+    """Reduce each OWASP category, in batches, so one reply cannot truncate."""
+    sections: dict[str, list[dict[str, Any]]] = {}
+    for category, group in group_by_category(items).items():
+        parts: list[list[Recommendation]] = []
+        last_messages: list[Message] | None = None
+        last_text = ""
+        for start in range(0, len(group), _REDUCE_BATCH):
+            batch = group[start : start + _REDUCE_BATCH]
+            messages = build_reduce_messages(
+                repo, batch, category, system_prompt=reduce_prompt
+            )
+            response = factory.generate("synthesizer", messages, schema=Recommendations)
+            ctx.emit(SynthesisChunk(text=response.text))
+            parts.append(_recommendations(response.parsed).recommendations)
+            last_messages = messages
+            last_text = response.text
+        if last_messages is None:
+            raise ConfigError(_INVALID)
+        if len(parts) == 1:
+            kept = _repair(factory, ctx, last_messages, last_text, parts[0], allowed)
+        else:
+            kept = _strip_batch(ctx, [item for part in parts for item in part], allowed)
+        if kept:
+            sections[category] = [item.model_dump() for item in kept]
+    return sections
 
 
-def _merge_parts(parts: list[Synthesis]) -> Synthesis:
-    if not parts:
-        raise ConfigError(_INVALID)
-    if len(parts) == 1:
-        return parts[0]
-    recommendations_by_topic: dict[str, list[Recommendation]] = {}
-    order: list[str] = []
-    for part in parts:
-        for topic in part.topics:
-            if topic.title not in recommendations_by_topic:
-                recommendations_by_topic[topic.title] = []
-                order.append(topic.title)
-            recommendations_by_topic[topic.title].extend(topic.recommendations)
+def _strip_batch(
+    ctx: RunContext, recommendations: list[Recommendation], allowed: set[str]
+) -> list[Recommendation]:
+    guideline = _wrap(recommendations)
+    if guideline is None or not _outside(guideline, allowed):
+        return recommendations
+    cleaned = _accept_citations(ctx, guideline, allowed)
+    return cleaned.topics[0].recommendations
+
+
+def _wrap(recommendations: list[Recommendation]) -> Synthesis | None:
+    if not recommendations:
+        return None
     return Synthesis(
-        topics=[
-            Topic(title=title, recommendations=recommendations_by_topic[title])
-            for title in order
-        ]
+        topics=[Topic(title=category_label("A01"), recommendations=recommendations)]
     )
 
 
@@ -287,8 +301,8 @@ def _quote(item: Any) -> bool:
     return isinstance(item.get("quote"), str) and isinstance(item.get("location"), str)
 
 
-def _guideline(parsed: Any) -> Synthesis:
-    if not isinstance(parsed, Synthesis):
+def _recommendations(parsed: Any) -> Recommendations:
+    if not isinstance(parsed, Recommendations):
         raise ConfigError(_INVALID)
     return parsed
 
@@ -354,18 +368,23 @@ def _repair(
     ctx: RunContext,
     messages: list[Message],
     text: str,
-    guideline: Synthesis,
+    recommendations: list[Recommendation],
     allowed: set[str],
-) -> Synthesis:
+) -> list[Recommendation]:
     """Ask the model once for citation fixes; strip leftovers if repair fails."""
-    if not _outside(guideline, allowed):
-        return guideline
-    text, guideline = _retry(
+    guideline = _wrap(recommendations)
+    if guideline is None or not _outside(guideline, allowed):
+        return recommendations
+    text, repaired = _retry(
         factory, ctx, messages, _citation_note(text, guideline, allowed)
     )
-    if _outside(guideline, allowed):
+    _ = text
+    guideline = _wrap(repaired)
+    if guideline is not None and _outside(guideline, allowed):
         guideline = _accept_citations(ctx, guideline, allowed)
-    return guideline
+    if guideline is None:
+        raise ConfigError(_OUTSIDE)
+    return guideline.topics[0].recommendations
 
 
 def _retry(
@@ -373,17 +392,17 @@ def _retry(
     ctx: RunContext,
     messages: list[Message],
     note: str,
-) -> tuple[str, Synthesis]:
+) -> tuple[str, list[Recommendation]]:
     try:
         response = factory.generate(
             "synthesizer",
             [*messages, Message(role="user", content=note)],
-            schema=Synthesis,
+            schema=Recommendations,
         )
     except (ValidationError, ValueError):
         raise ConfigError(_INVALID) from None
     ctx.emit(SynthesisChunk(text=response.text))
-    return response.text, _guideline(response.parsed)
+    return response.text, _recommendations(response.parsed).recommendations
 
 
 def _citation_note(text: str, guideline: Synthesis, allowed: set[str]) -> str:

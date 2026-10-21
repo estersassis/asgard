@@ -138,12 +138,12 @@ def _findings() -> list[dict[str, object]]:
 def _map_rules(security: int) -> str:
     return json.dumps(
         {
-            "rules": [
+            "items": [
                 {
                     "pr_id": str(security),
-                    "artifact": "algorithm allow-list",
-                    "rule": "Keep the algorithm allow-list a sequence.",
-                    "risk": "A bare string can bypass the allow-list.",
+                    "owasp": "A07",
+                    "title": "Keep the algorithm allow-list a sequence",
+                    "text": "Reject a bare string so the allow-list cannot be bypassed.",
                 }
             ]
         }
@@ -168,16 +168,11 @@ def _handler(security: int) -> FakeHandler:
     verdict = json.dumps({"verdict": "APPROVE", "findings": _findings(), "feedback": ""})
     synthesis = json.dumps(
         {
-            "topics": [
+            "recommendations": [
                 {
                     "title": "Authentication",
-                    "recommendations": [
-                        {
-                            "title": "Keep the algorithm allow-list a sequence",
-                            "text": "Reject a bare string so the allow-list cannot be bypassed.",
-                            "pr_ids": [str(security)],
-                        }
-                    ],
+                    "text": "Reject a bare string so the allow-list cannot be bypassed.",
+                    "pr_ids": [str(security)],
                 }
             ]
         }
@@ -392,6 +387,8 @@ def test_pipeline_page_assets() -> None:
     assert "startedAt" in js.text
     assert "formatElapsed" in js.text
     assert "err.stage !== event.stage" in js.text
+    assert "emptyStage()" in js.text
+    assert "STAGES.indexOf(event.stage)" in js.text
 
 
 def test_nav_preserves_run_query() -> None:
@@ -532,6 +529,7 @@ def test_guideline_page_assets() -> None:
     assert "map_prompt" in js.text
     assert "reduce_prompt" in js.text
     assert "/regenerate" in js.text
+    assert "Run in progress" in js.text
     assert "/bundle.zip" in js.text
     assert "unknown_citations" in js.text
 
@@ -1097,16 +1095,11 @@ def test_guideline_file_endpoints_and_prompt(
 def _synthesis(security: int, *, title: str = "Authentication") -> str:
     return json.dumps(
         {
-            "topics": [
+            "recommendations": [
                 {
                     "title": title,
-                    "recommendations": [
-                        {
-                            "title": "Keep the algorithm allow-list a sequence",
-                            "text": "Reject a bare string so the allow-list cannot be bypassed.",
-                            "pr_ids": [str(security)],
-                        }
-                    ],
+                    "text": "Reject a bare string so the allow-list cannot be bypassed.",
+                    "pr_ids": [str(security)],
                 }
             ]
         }

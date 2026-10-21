@@ -138,28 +138,23 @@ def _handler(security: int) -> FakeHandler:
     verdict = json.dumps({"verdict": "APPROVE", "findings": _findings(), "feedback": ""})
     mapped = json.dumps(
         {
-            "rules": [
+            "items": [
                 {
                     "pr_id": str(security),
-                    "artifact": "algorithm allow-list",
-                    "rule": "Keep the algorithm allow-list a sequence.",
-                    "risk": "A bare string can bypass the allow-list.",
+                    "owasp": "A07",
+                    "title": "Keep the algorithm allow-list a sequence.",
+                    "text": "A bare string can bypass the allow-list.",
                 }
             ]
         }
     )
     synthesis = json.dumps(
         {
-            "topics": [
+            "recommendations": [
                 {
-                    "title": "Authentication",
-                    "recommendations": [
-                        {
-                            "title": "Keep the algorithm allow-list a sequence",
-                            "text": "Reject a bare string so the allow-list cannot be bypassed.",
-                            "pr_ids": [str(security)],
-                        }
-                    ],
+                    "title": "Keep the algorithm allow-list a sequence",
+                    "text": "Reject a bare string so the allow-list cannot be bypassed.",
+                    "pr_ids": [str(security)],
                 }
             ]
         }

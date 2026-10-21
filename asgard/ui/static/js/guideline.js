@@ -276,6 +276,33 @@
       els.empty.hidden = false;
       return;
     }
+    return api("").then(function (status) {
+      if (status.ok && status.body && status.body.running) {
+        state.regenerating = true;
+        setError("");
+        setStatus("Run in progress…");
+        updateChrome();
+        return waitDone().then(function (done) {
+          if (done.body && done.body.error) {
+            setError(done.body.error);
+            setStatus("");
+          } else {
+            setStatus("");
+          }
+          state.regenerating = false;
+          updateChrome();
+          return loadFiles();
+        });
+      }
+      return loadFiles();
+    });
+  }
+
+  function loadFiles() {
+    if (!runId) {
+      els.empty.hidden = false;
+      return;
+    }
 
     return Promise.all([
       api("/SECURITY.md"),
@@ -324,7 +351,7 @@
             ? "SECURITY.md is not ready for this run yet."
             : "Could not load SECURITY.md.";
         updateChrome();
-        setError("");
+        if (els.error.hidden) setError("");
         return;
       }
 
@@ -382,7 +409,7 @@
         state.mapPrompt = mapText;
         state.reducePrompt = reduceText;
         state.open = null;
-        return load();
+        return loadFiles();
       })
       .then(function () {
         setStatus("Guideline updated.");

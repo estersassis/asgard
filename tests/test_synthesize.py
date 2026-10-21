@@ -10,13 +10,7 @@ from asgard.core.config import ConfigError
 from asgard.core.events import CitationWarning, SynthesisChunk
 from asgard.core.stage import RunContext
 from asgard.core.stages.synthesize import SynthesizeStage
-from asgard.prompts.synthesizer import (
-    MAP_PROMPT,
-    REDUCE_PROMPT,
-    build_map_messages,
-    build_reduce_messages,
-    map_records,
-)
+from asgard.prompts.synthesizer import build_map_messages, build_reduce_messages
 from asgard.providers.factory import LLMFactory
 from asgard.providers.handlers.fake import FakeHandler
 from asgard.providers.models import Credentials, LLMSettings, RoleSpec
@@ -39,15 +33,15 @@ def _record(pr_id: str) -> dict[str, object]:
     }
 
 
-def _map_response(pr_ids: list[str]) -> str:
+def _map_response(pr_ids: list[str], *, owasp: str = "A07") -> str:
     return json.dumps(
         {
-            "rules": [
+            "items": [
                 {
                     "pr_id": pr_id,
-                    "artifact": "token check",
-                    "rule": f"Validate tokens from pull {pr_id}.",
-                    "risk": "Authentication can be bypassed.",
+                    "owasp": owasp,
+                    "title": f"Check {pr_id}",
+                    "text": f"Validate tokens from pull {pr_id}.",
                 }
                 for pr_id in pr_ids
             ]
@@ -58,21 +52,24 @@ def _map_response(pr_ids: list[str]) -> str:
 def _reduce_response(groups: list[list[str]], *, title: str = "Authentication") -> str:
     return json.dumps(
         {
-            "topics": [
+            "recommendations": [
                 {
-                    "title": title,
-                    "recommendations": [
-                        {
-                            "title": f"Check {index}",
-                            "text": f"Reject unsigned tokens from pull {ids[0]}.",
-                            "pr_ids": ids,
-                        }
-                        for index, ids in enumerate(groups, 1)
-                    ],
+                    "title": title if len(groups) == 1 else f"Check {index}",
+                    "text": f"Reject unsigned tokens from pull {ids[0]}.",
+                    "pr_ids": ids,
                 }
+                for index, ids in enumerate(groups, 1)
             ]
         }
     )
+
+
+def _payload(records: list[dict[str, object]]) -> str:
+    rows = [
+        {key: record[key] for key in ("pr_id", "title", "evidence", "rationale")}
+        for record in records
+    ]
+    return json.dumps(rows, indent=2)
 
 
 def _run(
@@ -111,13 +108,14 @@ def test_map_then_reduce_for_one_batch(tmp_path: Path) -> None:
     )
     output, events = _run(tmp_path, handler, records)
     assert len(handler.calls) == 2
-    assert handler.calls[0][0].content == MAP_PROMPT.replace("{repository}", "acme/app")
-    assert handler.calls[0][1].content == json.dumps(map_records(records), indent=2)
+    assert handler.calls[0][0].content == build_map_messages("acme/app", records)[0].content
+    assert handler.calls[0][1].content == _payload(records)
     assert "link" not in handler.calls[0][1].content
-    assert handler.calls[1][0].content == REDUCE_PROMPT.replace("{repository}", "acme/app")
+    assert "A07:2025 Authentication Failures" in handler.calls[1][0].content
     mapped = json.loads(handler.calls[1][1].content)
     assert [rule["pr_id"] for rule in mapped] == ["12", "34"]
     assert output.startswith("# app Security Policy — User Guidelines\n")
+    assert "A07:2025 Authentication Failures" in output
     cited = _recommendation_ids(output)
     assert cited == [{"12"}, {"34", "12"}]
     chunks = [event for event in events if isinstance(event, SynthesisChunk)]
@@ -150,7 +148,7 @@ def test_map_batches_of_twenty(tmp_path: Path) -> None:
 
 def test_empty_map_rules_skip_reduce(tmp_path: Path) -> None:
     records = [_record("12")]
-    handler = FakeHandler([json.dumps({"rules": []})])
+    handler = FakeHandler([json.dumps({"items": []})])
     output, _events = _run(tmp_path, handler, records)
     assert output == _EMPTY
     assert len(handler.calls) == 1
@@ -166,8 +164,8 @@ def test_reduce_batches_of_fifty_and_merges_topics(tmp_path: Path) -> None:
             _map_response(map_ids),
             _map_response(map_ids_2),
             _map_response(map_ids_3),
-            _reduce_response([["1"]]),
-            _reduce_response([["51"]], title="Auth"),
+            _reduce_response([["1"]], title="Authentication"),
+            _reduce_response([["51"]], title="Replay protection"),
         ]
     )
     # Patch reduce batch size via module for this test would be ideal; 51 rules
@@ -177,8 +175,9 @@ def test_reduce_batches_of_fifty_and_merges_topics(tmp_path: Path) -> None:
     reduce_payloads = [json.loads(call[1].content) for call in handler.calls[3:]]
     assert len(reduce_payloads[0]) == 50
     assert len(reduce_payloads[1]) == 1
-    assert "1. Authentication" in output
-    assert "2. Auth" in output or "## 2." in output
+    assert "A07:2025 Authentication Failures" in output
+    assert "Authentication" in output
+    assert "Replay protection" in output
 
 
 def test_reuses_existing_map_json(tmp_path: Path) -> None:
@@ -190,9 +189,9 @@ def test_reuses_existing_map_json(tmp_path: Path) -> None:
             [
                 {
                     "pr_id": "12",
-                    "artifact": "token check",
-                    "rule": "Validate tokens.",
-                    "risk": "Bypass.",
+                    "owasp": "A07",
+                    "title": "Validate tokens.",
+                    "text": "Bypass.",
                 }
             ]
         )
@@ -202,7 +201,7 @@ def test_reuses_existing_map_json(tmp_path: Path) -> None:
     handler = FakeHandler([_reduce_response([["12"]])])
     _run(tmp_path, handler, records)
     assert len(handler.calls) == 1
-    assert '"topics"' in handler.calls[0][1].content or "12" in handler.calls[0][1].content
+    assert "12" in handler.calls[0][1].content
 
 
 def test_outside_citation_is_rejected_and_the_second_call_corrects(tmp_path: Path) -> None:
@@ -244,20 +243,27 @@ def test_build_map_messages_uses_override_and_keeps_json_braces() -> None:
     records = [_record("12")]
     messages = build_map_messages("acme/app", records, system_prompt="Map {repository}.")
     assert messages[0].content == "Map acme/app."
-    assert messages[1].content == json.dumps(map_records(records), indent=2)
+    assert messages[1].content == _payload(records)
     builtin = build_map_messages("acme/app", records)
-    assert '{"rules"' in builtin[0].content
+    assert '{"items"' in builtin[0].content
     assert "{repository}" not in builtin[0].content
+    assert "{owasp_categories}" not in builtin[0].content
 
 
 def test_build_reduce_messages_uses_override_and_keeps_json_braces() -> None:
-    rules = [{"pr_id": "12", "artifact": "x", "rule": "Do y.", "risk": "Z."}]
-    messages = build_reduce_messages("acme/app", rules, system_prompt="Reduce {repository}.")
+    items = [{"pr_id": "12", "owasp": "A05", "title": "Do y.", "text": "Z."}]
+    messages = build_reduce_messages(
+        "acme/app", items, "A05", system_prompt="Reduce {repository}."
+    )
     assert messages[0].content == "Reduce acme/app."
-    assert messages[1].content == json.dumps(rules, indent=2)
-    builtin = build_reduce_messages("acme/app", rules)
-    assert '{"topics"' in builtin[0].content
+    assert messages[1].content == json.dumps(
+        [{"pr_id": "12", "title": "Do y.", "text": "Z."}], indent=2
+    )
+    builtin = build_reduce_messages("acme/app", items, "A05")
+    assert '{"recommendations"' in builtin[0].content
+    assert "A05:2025 Injection" in builtin[0].content
     assert "{repository}" not in builtin[0].content
+    assert "{category}" not in builtin[0].content
 
 
 def test_stage_loads_map_and_reduce_prompt_overrides(tmp_path: Path) -> None:
@@ -279,5 +285,5 @@ def test_stage_loads_legacy_system_prompt_as_reduce(tmp_path: Path) -> None:
     prompt.write_text("Legacy reduce {repository}.", encoding="utf-8")
     handler = FakeHandler([_map_response(["12"]), _reduce_response([["12"]])])
     _run(tmp_path, handler, records)
-    assert handler.calls[0][0].content == MAP_PROMPT.replace("{repository}", "acme/app")
+    assert handler.calls[0][0].content == build_map_messages("acme/app", records)[0].content
     assert handler.calls[1][0].content == "Legacy reduce acme/app."
