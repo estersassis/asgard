@@ -51,6 +51,31 @@
   resize: vertical;
 }
 
+.guideline-strategy-options {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.guideline-strategy-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.guideline-batch-size input {
+  width: 5.5rem;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+
 .guideline-prompt-row {
   display: flex;
   justify-content: space-between;
@@ -111,7 +136,51 @@
 }
 
 .ms p {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
+}
+
+.ms ul {
+  margin: 0 0 6px;
+  padding-left: 1.2rem;
+}
+
+.ms .related-prs {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.ms .more-prs {
+  display: inline;
+}
+
+.ms .more-prs summary {
+  display: inline;
+  cursor: pointer;
+  color: var(--ember);
+}
+
+.ms .more-prs-box {
+  display: block;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  line-height: 1.8;
+}
+
+.ms .related-label {
+  color: var(--ink);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.ms li {
+  margin: 0 0 6px;
+}
+
+.ms li:last-child {
+  margin-bottom: 0;
 }
 
 .ms hr {

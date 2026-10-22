@@ -140,10 +140,11 @@ def _handler(security: int) -> FakeHandler:
         {
             "items": [
                 {
-                    "pr_id": str(security),
                     "owasp": "A07",
                     "title": "Keep the algorithm allow-list a sequence.",
-                    "text": "A bare string can bypass the allow-list.",
+                    "risk": "A bare string can bypass the allow-list.",
+                    "actions": ["Keep the allow-list a sequence."],
+                    "pr_ids": [str(security)],
                 }
             ]
         }
@@ -152,9 +153,11 @@ def _handler(security: int) -> FakeHandler:
         {
             "recommendations": [
                 {
+                    "owasp": "A07",
                     "title": "Keep the algorithm allow-list a sequence",
-                    "text": "Reject a bare string so the allow-list cannot be bypassed.",
-                    "pr_ids": [str(security)],
+                    "risk": "A bare string can bypass the allow-list.",
+                    "actions": ["Reject a bare string so the allow-list cannot be bypassed."],
+                    "sources": ["1"],
                 }
             ]
         }
