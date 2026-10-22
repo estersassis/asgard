@@ -39,6 +39,7 @@ _TOP_LEVEL = (
     "export_xlsx",
     "output_dir",
     "security_md",
+    "synthesize_batch_size",
 )
 
 
@@ -106,6 +107,7 @@ class RunConfig(BaseModel):
     max_iterations: int = 3
     batch_size: int = 1
     batch_max_chars: int | None = None
+    synthesize_batch_size: int | None = None
     prefilter: bool = False
     include_unresolved: bool = False
     export_xlsx: bool = False
@@ -134,6 +136,13 @@ class RunConfig(BaseModel):
     def _batch_size(cls, value: int) -> int:
         if value < 1:
             raise ValueError("batch_size must be >= 1")
+        return value
+
+    @field_validator("synthesize_batch_size")
+    @classmethod
+    def _synthesize_batch_size(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("synthesize_batch_size must be >= 1")
         return value
 
     @field_validator("batch_max_chars")
