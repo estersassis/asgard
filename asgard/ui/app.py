@@ -109,6 +109,8 @@ class RegenerateBody(BaseModel):
     prompt: str | None = None
     map_prompt: str | None = None
     reduce_prompt: str | None = None
+    map_mode: Literal["full", "batch"] | None = None
+    map_batch_size: int | None = Field(default=None, ge=1)
 
     model_config = {"populate_by_name": True}
 
@@ -575,6 +577,8 @@ def create_app(
         session = _session_or_404(run_id)
         if body.from_stage not in PIPELINE:
             raise HTTPException(status_code=400, detail=f"unknown stage: {body.from_stage}")
+        if body.map_mode == "batch" and body.map_batch_size is None:
+            raise HTTPException(status_code=400, detail="map_batch_size is required")
         try:
             session.join(timeout=30)
             output_dir = session.regenerate_from(
@@ -582,6 +586,8 @@ def create_app(
                 prompt=body.prompt,
                 map_prompt=body.map_prompt,
                 reduce_prompt=body.reduce_prompt,
+                map_mode=body.map_mode,
+                map_batch_size=body.map_batch_size,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

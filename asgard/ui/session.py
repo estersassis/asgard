@@ -25,6 +25,16 @@ _REDUCE_PROMPT = "reduce_prompt.txt"
 _LEGACY_PROMPT = "system_prompt.txt"
 
 
+def _write_map_batch(output_dir: Path, mode: str, size: int | None) -> None:
+    """Persist the map strategy on the run. ``full`` clears the batch size."""
+    path = output_dir / "config.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("run configuration is invalid")
+    data["synthesize_batch_size"] = size if mode == "batch" else None
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 class RunSession:
     def __init__(
         self,
@@ -126,6 +136,8 @@ class RunSession:
         prompt: str | None = None,
         map_prompt: str | None = None,
         reduce_prompt: str | None = None,
+        map_mode: str | None = None,
+        map_batch_size: int | None = None,
     ) -> Path:
         """Clear ``stage`` and later outputs, then resume from that stage.
 
@@ -148,6 +160,10 @@ class RunSession:
             legacy = synthesize / _LEGACY_PROMPT
             if legacy.is_file():
                 legacy.unlink()
+        if map_mode == "batch" and (map_batch_size is None or map_batch_size < 1):
+            raise ValueError("map_batch_size is required")
+        if map_mode in ("full", "batch"):
+            _write_map_batch(self.output_dir, map_mode, map_batch_size)
         clear_from(self.output_dir, stage)
         # clear_from keeps map.json for resume-after-reduce-failure; regenerate
         # must re-run map so edited map prompts take effect.

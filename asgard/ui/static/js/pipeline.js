@@ -204,9 +204,15 @@
       case "StageStarted":
         stage = state.stages[event.stage];
         if (!stage) break;
-        // Drop stale errors from earlier failed attempts of this stage.
+        var restarted = STAGES.indexOf(event.stage);
+        // A new pass (resume or regenerate) invalidates every later stage.
+        for (var later = restarted + 1; later < STAGES.length; later++) {
+          state.stages[STAGES[later]] = emptyStage();
+        }
+        // Drop stale errors from this stage and from the stages it restarts.
         state.errors = state.errors.filter(function (err) {
-          return err.stage !== event.stage;
+          var at = STAGES.indexOf(err.stage);
+          return err.stage !== event.stage && (at < 0 || at <= restarted);
         });
         stage.state = "running";
         stage.total = typeof event.total === "number" ? event.total : null;

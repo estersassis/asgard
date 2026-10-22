@@ -193,7 +193,7 @@ def build_stages(
             batch_max_chars=config.batch_max_chars,
         ),
         ConsolidateStage(config.include_unresolved),
-        SynthesizeStage(config.repo, factory),
+        SynthesizeStage(config.repo, factory, map_batch=config.synthesize_batch_size),
         SecurityMdStage(config.repo, config.llm, path=config.security_md),
         BundleStage(config.export_xlsx),
     ]

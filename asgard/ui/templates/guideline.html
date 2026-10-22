@@ -24,6 +24,23 @@
         <span class="lbl">Reduce prompt</span>
         <textarea id="guideline-reduce-prompt" rows="8" spellcheck="false"></textarea>
       </label>
+      <div class="guideline-strategy" id="guideline-strategy">
+        <span class="lbl">Map</span>
+        <div class="guideline-strategy-options">
+          <label>
+            <input type="radio" name="guideline-map-mode" id="guideline-mode-full" value="full" checked>
+            Full
+          </label>
+          <label>
+            <input type="radio" name="guideline-map-mode" id="guideline-mode-batch" value="batch">
+            Batch
+          </label>
+          <label class="guideline-batch-size">
+            <span class="lbl">Batch size</span>
+            <input type="number" id="guideline-batch-size" min="1" step="1" value="50" disabled>
+          </label>
+        </div>
+      </div>
       <div class="guideline-prompt-row">
         <span class="guideline-reuse" id="guideline-reuse"></span>
         <button type="button" class="btn" id="guideline-regenerate">Regenerate</button>

@@ -138,12 +138,13 @@ def _findings() -> list[dict[str, object]]:
 def _map_rules(security: int) -> str:
     return json.dumps(
         {
-            "rules": [
+            "items": [
                 {
-                    "pr_id": str(security),
-                    "artifact": "algorithm allow-list",
-                    "rule": "Keep the algorithm allow-list a sequence.",
+                    "owasp": "A07",
+                    "title": "Keep the algorithm allow-list a sequence",
                     "risk": "A bare string can bypass the allow-list.",
+                    "actions": ["Keep the allow-list a sequence."],
+                    "pr_ids": [str(security)],
                 }
             ]
         }
@@ -168,16 +169,13 @@ def _handler(security: int) -> FakeHandler:
     verdict = json.dumps({"verdict": "APPROVE", "findings": _findings(), "feedback": ""})
     synthesis = json.dumps(
         {
-            "topics": [
+            "recommendations": [
                 {
+                    "owasp": "A07",
                     "title": "Authentication",
-                    "recommendations": [
-                        {
-                            "title": "Keep the algorithm allow-list a sequence",
-                            "text": "Reject a bare string so the allow-list cannot be bypassed.",
-                            "pr_ids": [str(security)],
-                        }
-                    ],
+                    "risk": "A bare string can bypass the allow-list.",
+                    "actions": ["Reject a bare string so the allow-list cannot be bypassed."],
+                    "sources": ["1"],
                 }
             ]
         }
@@ -392,6 +390,8 @@ def test_pipeline_page_assets() -> None:
     assert "startedAt" in js.text
     assert "formatElapsed" in js.text
     assert "err.stage !== event.stage" in js.text
+    assert "emptyStage()" in js.text
+    assert "STAGES.indexOf(event.stage)" in js.text
 
 
 def test_nav_preserves_run_query() -> None:
@@ -498,6 +498,9 @@ def test_guideline_page_assets() -> None:
     assert 'id="guideline-map-prompt"' in page.text
     assert 'id="guideline-reduce-prompt"' in page.text
     assert 'id="guideline-regenerate"' in page.text
+    assert 'id="guideline-mode-full"' in page.text
+    assert 'id="guideline-mode-batch"' in page.text
+    assert 'id="guideline-batch-size"' in page.text
     assert 'id="guideline-preview"' in page.text
     assert 'class="ms"' in page.text
     assert "SECURITY.md" in page.text
@@ -531,7 +534,17 @@ def test_guideline_page_assets() -> None:
     assert "/synthesize/prompts" in js.text
     assert "map_prompt" in js.text
     assert "reduce_prompt" in js.text
+    assert "map_mode" in js.text
+    assert "map_batch_size" in js.text
     assert "/regenerate" in js.text
+    assert "<ul>" in js.text
+    assert "<li>" in js.text
+    assert "mergeDuplicateRecs" in js.text
+    assert "(mais prs...)" in js.text
+    assert "more-prs" in js.text
+    assert "shownMarkdown" in js.text
+    assert "downloadShown" in js.text
+    assert "Run in progress" in js.text
     assert "/bundle.zip" in js.text
     assert "unknown_citations" in js.text
 
@@ -1097,16 +1110,13 @@ def test_guideline_file_endpoints_and_prompt(
 def _synthesis(security: int, *, title: str = "Authentication") -> str:
     return json.dumps(
         {
-            "topics": [
+            "recommendations": [
                 {
+                    "owasp": "A07",
                     "title": title,
-                    "recommendations": [
-                        {
-                            "title": "Keep the algorithm allow-list a sequence",
-                            "text": "Reject a bare string so the allow-list cannot be bypassed.",
-                            "pr_ids": [str(security)],
-                        }
-                    ],
+                    "risk": "A bare string can bypass the allow-list.",
+                    "actions": ["Reject a bare string so the allow-list cannot be bypassed."],
+                    "sources": ["1"],
                 }
             ]
         }
@@ -1181,6 +1191,8 @@ def test_guideline_regenerate_skips_classify(
             "from": "synthesize",
             "map_prompt": map_override,
             "reduce_prompt": reduce_override,
+            "map_mode": "batch",
+            "map_batch_size": 10,
         },
     )
     assert regenerated.status_code == 200, regenerated.text
@@ -1219,6 +1231,8 @@ def test_guideline_regenerate_skips_classify(
     assert (
         out / "synthesize" / "reduce_prompt.txt"
     ).read_text(encoding="utf-8") == reduce_override
+    saved = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    assert saved["synthesize_batch_size"] == 10
 
 
 def test_stop_and_resume_from_stage(

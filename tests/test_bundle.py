@@ -15,7 +15,7 @@ from asgard.core.stage import RunContext
 from asgard.core.stages.bundle import BundleStage
 from asgard.prompts.classifier import SYSTEM_PROMPT as CLASSIFIER_PROMPT
 from asgard.prompts.evaluator import SYSTEM_PROMPT as EVALUATOR_PROMPT
-from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT, fill_repository
+from asgard.prompts.synthesizer import MAP_PROMPT, REDUCE_PROMPT, fill
 
 TOKEN = "ghp_bundle_secret"
 _METRICS = {
@@ -141,14 +141,14 @@ def test_synthesizer_prompt_hash_uses_override_files(tmp_path: Path) -> None:
     manifest = _run(tmp_path)
 
     assert manifest["prompts"]["synthesizer_map"] == _sha(
-        fill_repository(map_override, "acme/app")
+        fill(map_override, repository="acme/app")
     )
     assert manifest["prompts"]["synthesizer_reduce"] == _sha(
-        fill_repository(reduce_override, "acme/app")
+        fill(reduce_override, repository="acme/app")
     )
     assert manifest["prompts"]["synthesizer"] == manifest["prompts"]["synthesizer_reduce"]
     assert manifest["prompts"]["synthesizer_reduce"] != _sha(
-        fill_repository(REDUCE_PROMPT, "acme/app")
+        fill(REDUCE_PROMPT, repository="acme/app")
     )
 
 
@@ -211,9 +211,9 @@ def test_manifest_describes_every_file_and_omits_secrets(tmp_path: Path) -> None
     assert prompts == {
         "classifier": _sha(CLASSIFIER_PROMPT),
         "evaluator": _sha(EVALUATOR_PROMPT),
-        "synthesizer_map": _sha(fill_repository(MAP_PROMPT, "acme/app")),
-        "synthesizer_reduce": _sha(fill_repository(REDUCE_PROMPT, "acme/app")),
-        "synthesizer": _sha(fill_repository(REDUCE_PROMPT, "acme/app")),
+        "synthesizer_map": _sha(fill(MAP_PROMPT, repository="acme/app")),
+        "synthesizer_reduce": _sha(fill(REDUCE_PROMPT, repository="acme/app")),
+        "synthesizer": _sha(fill(REDUCE_PROMPT, repository="acme/app")),
     }
     assert manifest["models"] == {
         "classifier": {"provider": "fake", "model": "class-model"},
