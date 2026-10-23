@@ -8,7 +8,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from asgard.core.config import prepare_run
+from pydantic import ValidationError
+
+from asgard.core.config import ConfigError, prepare_run
 from asgard.core.pipeline import (
     PIPELINE,
     classify_retryable_ids,
@@ -17,6 +19,9 @@ from asgard.core.pipeline import (
     run_pipeline,
 )
 from asgard.core.stage import CancelledError
+from asgard.core.stages.simplify import simplify_security_md
+from asgard.providers.factory import LLMFactory
+from asgard.providers.models import LLMSettings
 from asgard.ui.runs import discover_runs, resolve_run_dir, stable_run_id
 from asgard.ui.sink import UISink
 
@@ -217,6 +222,30 @@ class RunSession:
         )
         return output_dir, removed
 
+    def simplify(self) -> Path:
+        """Rewrite SECURITY.md in the background. Does not rerun the pipeline."""
+        if self.output_dir is None:
+            raise RuntimeError("no run to simplify")
+        if not (self.output_dir / "SECURITY.md").is_file():
+            raise RuntimeError("SECURITY.md is not ready")
+        if self.running:
+            raise RuntimeError("a run is already in progress")
+        self.join()
+        factory = _simplifier_factory(self.output_dir, self.handlers)
+        with self._lock:
+            if self._running:
+                raise RuntimeError("a run is already in progress")
+            self.error = None
+            self._running = True
+            self._thread = threading.Thread(
+                target=self._simplify,
+                kwargs={"factory": factory},
+                daemon=True,
+                name=f"asgard-simplify-{self.id[:8]}",
+            )
+            self._thread.start()
+            return self.output_dir
+
     def join(self, timeout: float | None = None) -> None:
         thread = self._thread
         if thread is not None:
@@ -240,6 +269,34 @@ class RunSession:
             self.sink.close()
             with self._lock:
                 self._running = False
+
+    def _simplify(self, *, factory: LLMFactory) -> None:
+        try:
+            if self.output_dir is None:
+                raise RuntimeError("no run to simplify")
+            simplify_security_md(self.output_dir, factory)
+        except Exception as exc:
+            self.error = str(exc)
+        finally:
+            with self._lock:
+                self._running = False
+
+
+def _simplifier_factory(output_dir: Path, handlers: dict[str, Any] | None) -> LLMFactory:
+    path = output_dir / "config.json"
+    if not path.is_file():
+        raise ConfigError("run configuration is missing")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise ConfigError("run configuration is invalid") from None
+    if not isinstance(data, dict):
+        raise ConfigError("run configuration is invalid")
+    try:
+        settings = LLMSettings.model_validate(data.get("llm"))
+    except ValidationError:
+        raise ConfigError("run configuration is invalid") from None
+    return LLMFactory(settings, handlers=handlers)
 
 
 class SessionStore:

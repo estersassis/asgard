@@ -1,4 +1,4 @@
-"""Versioned system prompts for classifier, evaluator, and synthesizer."""
+"""Versioned system prompts for classifier, evaluator, synthesizer, and simplifier."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-ROLES = ("classifier", "evaluator", "synthesizer")
+ROLES = ("classifier", "evaluator", "synthesizer", "simplifier")
 _DEFAULT_ID = "default"
 _SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -128,6 +128,10 @@ def builtin_body(role: str) -> str:
         from asgard.prompts.evaluator import SYSTEM_PROMPT
 
         return SYSTEM_PROMPT
+    if role == "simplifier":
+        from asgard.prompts.simplifier import SYSTEM_PROMPT
+
+        return SYSTEM_PROMPT
     from asgard.prompts.synthesizer import REDUCE_PROMPT
 
     return REDUCE_PROMPT
@@ -162,7 +166,7 @@ def resolve_system_prompt(role: str, config: object | None, run_dir: Path) -> st
     Precedence:
     - synthesizer (reduce): ``synthesize/reduce_prompt.txt`` → legacy
       ``synthesize/system_prompt.txt`` → registry selection → built-in reduce
-    - classifier / evaluator: registry selection → built-in
+    - classifier / evaluator / simplifier: registry selection → built-in
 
     ``config`` may be a ``RunConfig``, a redacted config dict, or ``None`` (defaults).
     """

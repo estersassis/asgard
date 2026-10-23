@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validat
 from asgard.core.prompt_registry import PromptRegistry, default_registry_root
 from asgard.providers.models import LLMSettings, RoleSpec, credentials_from_env
 
-_ROLES = ("classifier", "evaluator", "synthesizer")
+_ROLES = ("classifier", "evaluator", "synthesizer", "simplifier")
 _REPO = re.compile(r"[^/\s]+/[^/\s]+")
 _GITHUB = re.compile(
     r"(?:https?://)?(?:www\.)?github\.com/([^/\s]+)/([^/\s]+?)(?:\.git)?/?$"
@@ -86,9 +86,10 @@ class PromptSelection(BaseModel):
     classifier: str = "default"
     evaluator: str = "default"
     synthesizer: str = "default"
+    simplifier: str = "default"
     registry_dir: Path | None = None
 
-    @field_validator("classifier", "evaluator", "synthesizer")
+    @field_validator("classifier", "evaluator", "synthesizer", "simplifier")
     @classmethod
     def _prompt_id(cls, value: str) -> str:
         value = value.strip()

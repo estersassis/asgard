@@ -10,6 +10,10 @@
   var els = {
     label: document.getElementById("guideline-label"),
     edit: document.getElementById("guideline-edit"),
+    simplify: document.getElementById("guideline-simplify"),
+    views: document.getElementById("guideline-views"),
+    viewOriginal: document.getElementById("guideline-view-original"),
+    viewSimplified: document.getElementById("guideline-view-simplified"),
     bundle: document.getElementById("guideline-bundle"),
     download: document.getElementById("guideline-download"),
     promptPanel: document.getElementById("guideline-prompt-panel"),
@@ -33,12 +37,16 @@
     open: null,
     openLists: {},
     markdown: "",
+    simplified: "",
+    view: "original",
     consolidate: [],
     unknown: {},
+    simplifiedUnknown: {},
     repo: "",
     mapPrompt: "",
     reducePrompt: "",
     regenerating: false,
+    simplifying: false,
   };
 
   function api(path, options) {
@@ -307,8 +315,18 @@
     };
   }
 
+  function currentMarkdown() {
+    if (state.view === "simplified" && state.simplified) return state.simplified;
+    return state.markdown;
+  }
+
+  function currentUnknown() {
+    if (state.view === "simplified" && state.simplified) return state.simplifiedUnknown;
+    return state.unknown;
+  }
+
   function citeHtml(href, id) {
-    var warn = state.unknown[id] ? " warn" : "";
+    var warn = currentUnknown()[id] ? " warn" : "";
     var open = state.open === id;
     return (
       '<button type="button" class="cite' +
@@ -357,7 +375,7 @@
             "</span>"
         );
       });
-    } else if (state.unknown[prId]) {
+    } else if (currentUnknown()[prId]) {
       parts.push(
         "<span>Not in the approved security set. Kept as a link and reported as a citation warning.</span>"
       );
@@ -397,7 +415,7 @@
   }
 
   function renderPreview() {
-    var doc = splitDoc(state.markdown);
+    var doc = splitDoc(currentMarkdown());
     var html = replaceCitations(renderMarkdown(mergeDuplicateRecs(doc.body)));
     if (doc.footer) {
       html += '<div class="ms-footer">' + escapeHtml(doc.footer) + "</div>";
@@ -441,7 +459,8 @@
   }
 
   function updateChrome() {
-    var label = "SECURITY.md";
+    var showingSimplified = state.view === "simplified" && state.simplified;
+    var label = showingSimplified ? "SECURITY.simplified.md" : "SECURITY.md";
     if (state.repo) label += " · " + state.repo;
     els.label.textContent = label;
 
@@ -457,7 +476,13 @@
     if (state.markdown) {
       els.download.hidden = false;
       els.download.href = "#";
-      els.download.setAttribute("download", "SECURITY.md");
+      els.download.textContent = showingSimplified
+        ? "SECURITY.simplified.md ↓"
+        : "SECURITY.md ↓";
+      els.download.setAttribute(
+        "download",
+        showingSimplified ? "SECURITY.simplified.md" : "SECURITY.md"
+      );
       els.bundle.hidden = false;
       els.bundle.href = base + "/bundle.zip";
       els.bundle.setAttribute("download", "bundle.zip");
@@ -469,7 +494,17 @@
       els.preview.hidden = true;
     }
 
-    els.regenerate.disabled = state.regenerating;
+    els.regenerate.disabled = state.regenerating || state.simplifying;
+    if (els.simplify) {
+      els.simplify.disabled = state.simplifying || state.regenerating || !state.markdown;
+    }
+    if (els.views) els.views.hidden = !state.simplified;
+    if (els.viewOriginal) {
+      els.viewOriginal.setAttribute("aria-pressed", showingSimplified ? "false" : "true");
+    }
+    if (els.viewSimplified) {
+      els.viewSimplified.setAttribute("aria-pressed", showingSimplified ? "true" : "false");
+    }
   }
 
   function load() {
@@ -511,12 +546,16 @@
       api("/security_md/output"),
       api("/config"),
       api("/synthesize/prompts"),
+      api("/SECURITY.simplified.md"),
+      api("/simplify/output"),
     ]).then(function (results) {
       var md = results[0];
       var consolidate = results[1];
       var securityMd = results[2];
       var config = results[3];
       var prompts = results[4];
+      var simplified = results[5];
+      var simplifyOut = results[6];
 
       state.consolidate =
         consolidate.ok && Array.isArray(consolidate.body) ? consolidate.body : [];
@@ -552,6 +591,18 @@
       if (state.editing || !els.reducePrompt.value) {
         els.reducePrompt.value = state.reducePrompt;
       }
+      state.simplified = simplified.ok ? simplified.text || "" : "";
+      state.simplifiedUnknown = {};
+      if (
+        simplifyOut.ok &&
+        simplifyOut.body &&
+        Array.isArray(simplifyOut.body.unknown_citations)
+      ) {
+        simplifyOut.body.unknown_citations.forEach(function (id) {
+          state.simplifiedUnknown[String(id)] = true;
+        });
+      }
+      if (!state.simplified && state.view === "simplified") state.view = "original";
 
       if (!md.ok) {
         state.markdown = "";
@@ -646,7 +697,54 @@
       });
   }
 
+  function simplify() {
+    if (!runId || state.simplifying || state.regenerating || !state.markdown) return;
+    state.simplifying = true;
+    setError("");
+    setStatus("Simplifying…");
+    updateChrome();
+    api("/simplify", { method: "POST" })
+      .then(function (result) {
+        if (!result.ok) {
+          var detail =
+            result.body && result.body.detail ? result.body.detail : "Simplify failed.";
+          throw new Error(typeof detail === "string" ? detail : "Simplify failed.");
+        }
+        return waitDone();
+      })
+      .then(function (status) {
+        if (status.body && status.body.error) {
+          throw new Error(status.body.error);
+        }
+        state.open = null;
+        return loadFiles();
+      })
+      .then(function () {
+        state.view = "simplified";
+        updateChrome();
+        renderPreview();
+        setStatus("Simplified guideline ready.");
+      })
+      .catch(function (err) {
+        setError(err && err.message ? err.message : "Simplify failed.");
+        setStatus("");
+      })
+      .then(function () {
+        state.simplifying = false;
+        updateChrome();
+      });
+  }
+
+  function showView(view) {
+    if (view === "simplified" && !state.simplified) return;
+    state.view = view;
+    state.open = null;
+    updateChrome();
+    renderPreview();
+  }
+
   function shownMarkdown() {
+    if (state.view === "simplified" && state.simplified) return state.simplified;
     var doc = splitDoc(state.markdown);
     var body = foldRelated(mergeDuplicateRecs(doc.body));
     if (body.charAt(body.length - 1) !== "\n") body += "\n";
@@ -677,7 +775,10 @@
     var url = URL.createObjectURL(blob);
     var link = document.createElement("a");
     link.href = url;
-    link.download = "SECURITY.md";
+    link.download =
+      state.view === "simplified" && state.simplified
+        ? "SECURITY.simplified.md"
+        : "SECURITY.md";
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -717,6 +818,17 @@
   });
 
   els.regenerate.addEventListener("click", regenerate);
+  if (els.simplify) els.simplify.addEventListener("click", simplify);
+  if (els.viewOriginal) {
+    els.viewOriginal.addEventListener("click", function () {
+      showView("original");
+    });
+  }
+  if (els.viewSimplified) {
+    els.viewSimplified.addEventListener("click", function () {
+      showView("simplified");
+    });
+  }
   if (els.download) els.download.addEventListener("click", downloadShown);
 
   updateChrome();

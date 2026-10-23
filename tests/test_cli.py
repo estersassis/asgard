@@ -215,6 +215,7 @@ def test_quiet_hides_progress_and_json_logs_go_to_stdout(
         "at": events[-1]["at"],
     }
     assert (out / "SECURITY.md").is_file()
+    assert not (out / "SECURITY.simplified.md").exists()
     assert (out / "manifest.json").is_file()
     assert (out / "events.jsonl").is_file()
 
@@ -525,7 +526,7 @@ def test_prompts_list_and_save(
 
     main(["prompts", "list"])
     all_roles = {line.split("\t")[0] for line in capsys.readouterr().out.splitlines() if line}
-    assert all_roles == {"classifier", "evaluator", "synthesizer"}
+    assert all_roles == {"classifier", "evaluator", "synthesizer", "simplifier"}
 
 
 def test_prompts_save_rejects_empty_name(

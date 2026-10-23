@@ -505,6 +505,10 @@ def test_guideline_page_assets() -> None:
     assert 'class="ms"' in page.text
     assert "SECURITY.md" in page.text
     assert "Edit prompts" in page.text
+    assert "Simplify" in page.text
+    assert 'id="guideline-simplify"' in page.text
+    assert 'id="guideline-view-original"' in page.text
+    assert 'id="guideline-view-simplified"' in page.text
     assert "Map prompt" in page.text
     assert "Reduce prompt" in page.text
     assert "Regenerate" in page.text
@@ -537,6 +541,8 @@ def test_guideline_page_assets() -> None:
     assert "map_mode" in js.text
     assert "map_batch_size" in js.text
     assert "/regenerate" in js.text
+    assert "/simplify" in js.text
+    assert "/SECURITY.simplified.md" in js.text
     assert "<ul>" in js.text
     assert "<li>" in js.text
     assert "mergeDuplicateRecs" in js.text
