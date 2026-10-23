@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
-RoleName = Literal["classifier", "evaluator", "synthesizer"]
+RoleName = Literal["classifier", "evaluator", "synthesizer", "simplifier"]
 ProviderName = Literal["gemini", "openai", "anthropic", "ollama", "fake"]
 
 _ENV_KEYS = {
@@ -46,8 +46,11 @@ class LLMSettings(BaseModel):
     classifier: RoleSpec | None = None
     evaluator: RoleSpec | None = None
     synthesizer: RoleSpec | None = None
+    simplifier: RoleSpec | None = None
 
     def resolve(self, role: RoleName) -> RoleSpec:
+        if role == "simplifier":
+            return self.simplifier or self.synthesizer or self.default
         if role not in ("classifier", "evaluator", "synthesizer"):
             raise ValueError(f"unknown role: {role}")
         return getattr(self, role) or self.default

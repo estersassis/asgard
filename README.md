@@ -93,6 +93,8 @@ Progress goes to stderr. `--quiet` hides it. `--json-logs` writes one JSON event
 
 `asgard export <run-dir>` writes `bundle/classifications.xlsx` from `classify/output.json`. It does not call a model and it does not rewrite the manifest.
 
+`asgard simplify <run-dir>` rewrites `SECURITY.md` into `SECURITY.simplified.md` in plainer language. It does not rerun classification, evaluation, or synthesis, and it does not change `SECURITY.md`.
+
 ## Configuration
 
 Settings can live in a TOML or JSON file passed with `--config`. Flags override the file. Omitted settings keep the file value. Save this as `asgard.toml` for a small run:

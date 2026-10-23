@@ -17,6 +17,13 @@ from asgard.core.prompt_registry import (
     resolve_system_prompt,
 )
 from asgard.core.stage import RunContext, Stage
+from asgard.core.stages.simplify import (
+    SIMPLIFIED_DESC,
+    SIMPLIFIED_NAME,
+    SIMPLIFY_OUTPUT,
+    SIMPLIFY_OUTPUT_DESC,
+    apply_simplifier_manifest,
+)
 from asgard.prompts.synthesizer import fill
 from asgard.providers.models import LLMSettings
 
@@ -37,6 +44,7 @@ _FILES = {
     "config.json": "Redacted run settings.",
     "events.jsonl": "Progress events for the run.",
     "SECURITY.md": "Security guideline with pull request links and a provenance footer.",
+    SIMPLIFIED_NAME: SIMPLIFIED_DESC,
     "manifest.json": "Run manifest.",
     "mine/output.json": "Mined pull request numbers.",
     "mine/metrics.json": "GraphQL mining request and cost metrics.",
@@ -53,6 +61,7 @@ _FILES = {
     "consolidate/summary.json": "Security, non-security, and unresolved counts.",
     "synthesize/output.json": "Synthesized user guideline.",
     "security_md/output.json": "Path of SECURITY.md and citation warnings.",
+    SIMPLIFY_OUTPUT: SIMPLIFY_OUTPUT_DESC,
     "bundle/output.json": "Stage output, the same document as manifest.json.",
     "bundle/classifications.xlsx": "Classification audit spreadsheet.",
 }
@@ -96,6 +105,7 @@ class BundleStage(Stage):
             "citation_warnings": _warnings(ctx),
             "files": _files(ctx),
         }
+        apply_simplifier_manifest(manifest, ctx.run_dir, config)
         _replace(ctx.run_dir / "manifest.json", json.dumps(manifest))
         return manifest
 

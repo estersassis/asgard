@@ -52,6 +52,8 @@ _RUN_FILE_CLASSIFY_METRICS = "classify/metrics.json"
 _RUN_FILE_CLASSIFY_OUTPUT = "classify/output.json"
 _RUN_FILE_CLASSIFY_ITEMS = "classify/items.jsonl"
 _RUN_FILE_SECURITY_MD = "SECURITY.md"
+_RUN_FILE_SECURITY_SIMPLIFIED = "SECURITY.simplified.md"
+_RUN_FILE_SIMPLIFY_OUTPUT = "simplify/output.json"
 _RUN_FILE_CONSOLIDATE_OUTPUT = "consolidate/output.json"
 _RUN_FILE_SECURITY_MD_OUTPUT = "security_md/output.json"
 _RUN_FILE_SYNTHESIZE_MAP_PROMPT = "synthesize/map_prompt.txt"
@@ -594,6 +596,15 @@ def create_app(
         run_id = store.bind_stable_id(session)
         return {"id": run_id, "output_dir": str(output_dir)}
 
+    @app.post("/api/runs/{run_id}/simplify")
+    async def simplify_run(run_id: str) -> dict[str, str]:
+        session = _session_or_404(run_id)
+        try:
+            output_dir = session.simplify()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": session.id, "output_dir": str(output_dir)}
+
     @app.post("/api/runs/{run_id}/classify/retry")
     async def retry_classify(run_id: str, body: RetryClassifyBody) -> dict[str, Any]:
         session = _session_or_404(run_id)
@@ -833,6 +844,23 @@ def create_app(
             _RUN_FILE_SECURITY_MD,
             "text/markdown",
             filename="SECURITY.md",
+        )
+
+    @app.get("/api/runs/{run_id}/SECURITY.simplified.md")
+    async def run_security_simplified(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_SECURITY_SIMPLIFIED,
+            "text/markdown",
+            filename="SECURITY.simplified.md",
+        )
+
+    @app.get("/api/runs/{run_id}/simplify/output")
+    async def run_simplify_output(run_id: str) -> FileResponse:
+        return _run_file(
+            _session_or_404(run_id),
+            _RUN_FILE_SIMPLIFY_OUTPUT,
+            "application/json",
         )
 
     @app.get("/api/runs/{run_id}/consolidate/output")

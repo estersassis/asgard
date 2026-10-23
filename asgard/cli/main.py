@@ -1,6 +1,7 @@
 """Console entry point."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,8 +20,11 @@ from asgard.core.pilot.gate import PromoteError
 from asgard.core.pipeline import PIPELINE, run_pipeline
 from asgard.core.sinks import CLIProgressSink, LoggingSink, StreamJSONSink
 from asgard.core.stages.bundle import export_classifications
+from asgard.core.stages.simplify import simplify_security_md
+from asgard.providers.factory import LLMFactory
+from asgard.providers.models import LLMSettings
 
-_ROLES = ("classifier", "evaluator", "synthesizer")
+_ROLES = ("classifier", "evaluator", "synthesizer", "simplifier")
 _PIPELINE = PIPELINE
 
 
@@ -35,6 +39,9 @@ def main(
     try:
         if args.command == "export":
             export_classifications(args.run_dir)
+            return
+        if args.command == "simplify":
+            _simplify(args.run_dir, handlers=handlers)
             return
         if args.command == "logs":
             show_logs(args.run_dir, follow=args.follow, stage=args.stage)
@@ -75,6 +82,24 @@ def main(
     except Exception as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(1) from None
+
+
+def _simplify(run_dir: Path, *, handlers: dict[str, Any] | None) -> None:
+    config_path = run_dir / "config.json"
+    if not config_path.is_file():
+        raise ConfigError("run configuration is missing")
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise ConfigError("run configuration is invalid") from None
+    if not isinstance(data, dict):
+        raise ConfigError("run configuration is invalid")
+    try:
+        settings = LLMSettings.model_validate(data.get("llm"))
+    except ValidationError:
+        raise ConfigError("run configuration is invalid") from None
+    factory = LLMFactory(settings, handlers=handlers)
+    print(simplify_security_md(run_dir, factory))
 
 
 def _run_prompts(args: argparse.Namespace) -> None:
@@ -207,6 +232,11 @@ def _parser() -> argparse.ArgumentParser:
         help="write a classification spreadsheet from a finished run",
     )
     export.add_argument("run_dir", type=Path)
+    simplify = sub.add_parser(
+        "simplify",
+        help="rewrite SECURITY.md into a plainer SECURITY.simplified.md",
+    )
+    simplify.add_argument("run_dir", type=Path)
     logs = sub.add_parser(
         "logs",
         help="print the progress log of a run, one stage at a time",

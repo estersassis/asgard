@@ -26,6 +26,16 @@
   flex-wrap: wrap;
 }
 
+.guideline-views {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.guideline-views .link[aria-pressed="true"] {
+  color: var(--ink);
+}
+
 .guideline-prompt {
   display: flex;
   flex-direction: column;
