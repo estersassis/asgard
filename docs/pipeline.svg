@@ -124,8 +124,8 @@
   <!-- ============ OUTPUT ============ -->
   <rect class="panel" x="1676" y="16" width="648" height="500" rx="16"/>
   <text class="sans head" x="1696" y="60">OUTPUT</text>
-  <line x1="2182" y1="52" x2="2222" y2="52" stroke="#8a8f98" stroke-width="2.5" stroke-dasharray="9 6"/>
-  <text class="sans sub" x="2232" y="60">optional</text>
+  <line x1="2182" y1="52" x2="2222" y2="52" opacity="0.6" stroke="#8a8f98" stroke-width="2.5" stroke-dasharray="9 6"/>
+  <text class="sans sub" x="2232" y="60" opacity="0.6">optional</text>
 
   <!-- SECURITY.md -->
   <g fill="none" stroke="#1f2328" stroke-width="3.5" stroke-linejoin="round">
@@ -147,6 +147,7 @@
   <text class="sans sub" x="1760" y="452">links citations</text>
 
   <!-- simplify (optional) -->
+  <g opacity="0.45">
   <line x1="1988" y1="424" x2="2022" y2="424" stroke="#5b616b" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#arr)"/>
 
   <g fill="none" stroke="#1f2328" stroke-width="3.5" stroke-linejoin="round" stroke-dasharray="8 5">
@@ -168,12 +169,14 @@
   <text class="mono name" x="2102" y="416">simplify</text>
   <text class="sans sub" x="2102" y="452">didactic rewrite</text>
 
+  </g>
+
   <!-- ============ BUNDLE ============ -->
   <line class="dot" x1="186" y1="516" x2="186" y2="556"/>
   <line class="dot" x1="826" y1="516" x2="826" y2="556"/>
   <line class="dot" x1="1466" y1="516" x2="1466" y2="556"/>
   <line class="dot" x1="1830" y1="516" x2="1830" y2="556"/>
-  <line class="dot" x1="2166" y1="516" x2="2166" y2="556"/>
+  <line class="dot" x1="2166" y1="516" x2="2166" y2="556" opacity="0.45"/>
 
   <rect class="panel" x="16" y="556" width="2308" height="72" rx="14"/>
   <circle cx="52" cy="592" r="20" fill="#8a8f98"/>
